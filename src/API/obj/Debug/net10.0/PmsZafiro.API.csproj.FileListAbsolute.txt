@@ -162,3 +162,4 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\refint\P
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.pdb
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.genruntimeconfig.cache
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\ref\PmsZafiro.API.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.sourcelink.json
