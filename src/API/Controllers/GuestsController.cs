@@ -1,7 +1,8 @@
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using PmsZafiro.Application.DTOs.Guests;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
+using PmsZafiro.Domain.Enums;
 
 namespace PmsZafiro.API.Controllers;
 
@@ -19,18 +20,25 @@ public class GuestsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<GuestDto>>> GetAll()
     {
-        var guests = await _repository.GetAllAsync();
+        var guests = await _repository.GetAllWithHistoryAsync();
         
-        // Mapeo manual simple (luego usaremos AutoMapper)
-        var dtos = guests.Select(g => new GuestDto
-        {
-            Id = g.Id,
-            FullName = g.FullName,
-            DocumentType = g.DocumentType.ToString(),
-            DocumentNumber = g.DocumentNumber,
-            Email = g.Email,
-            Phone = g.Phone,
-            Nationality = g.Nationality
+        var dtos = guests.Select(g => {
+            var lastRes = g.Reservations.OrderByDescending(r => r.EndDate).FirstOrDefault();
+            var isActive = g.Reservations.Any(r => r.Status == ReservationStatus.CheckedIn);
+
+            return new GuestDto
+            {
+                Id = g.Id,
+                FullName = g.FullName,
+                DocumentType = g.DocumentType.ToString(),
+                DocumentNumber = g.DocumentNumber,
+                Email = g.Email,
+                Phone = g.Phone,
+                Nationality = g.Nationality,
+                TotalStays = g.Reservations.Count(r => r.Status != ReservationStatus.Cancelled),
+                LastStayDate = lastRes?.EndDate.ToDateTime(TimeOnly.MinValue),
+                CurrentStatus = isActive ? "in-house" : "previous"
+            };
         });
 
         return Ok(dtos);
@@ -70,8 +78,6 @@ public class GuestsController : ControllerBase
         };
 
         await _repository.AddAsync(guest);
-
-        // Devolvemos el objeto creado (Nota: Idealmente devolveríamos un DTO aquí también)
         return CreatedAtAction(nameof(GetById), new { id = guest.Id }, guest);
     }
 }

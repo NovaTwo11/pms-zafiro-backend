@@ -1,6 +1,4 @@
-using PmsZafiro.Domain.Enums;
-
-namespace PmsZafiro.Application.DTOs.Guests;
+﻿namespace PmsZafiro.Application.DTOs.Guests;
 
 public class GuestDto
 {
@@ -11,4 +9,8 @@ public class GuestDto
     public string Email { get; set; } = string.Empty;
     public string Phone { get; set; } = string.Empty;
     public string Nationality { get; set; } = string.Empty;
+    
+    public int TotalStays { get; set; }
+    public DateTime? LastStayDate { get; set; }
+    public string CurrentStatus { get; set; } = "previous";
 }

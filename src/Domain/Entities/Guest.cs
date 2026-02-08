@@ -1,4 +1,4 @@
-using PmsZafiro.Domain.Enums;
+﻿using PmsZafiro.Domain.Enums;
 
 namespace PmsZafiro.Domain.Entities;
 
@@ -18,4 +18,6 @@ public class Guest
     public DateOnly? BirthDate { get; set; }
     
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }
