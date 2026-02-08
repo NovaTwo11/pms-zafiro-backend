@@ -26,6 +26,7 @@ builder.Services.AddScoped<IGuestRepository, GuestRepository>();
 builder.Services.AddScoped<IRoomRepository, RoomRepository>();
 builder.Services.AddScoped<IFolioRepository, FolioRepository>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+builder.Services.AddHostedService<PmsZafiro.API.Workers.HousekeepingWorker>();
 
 
 var app = builder.Build();
