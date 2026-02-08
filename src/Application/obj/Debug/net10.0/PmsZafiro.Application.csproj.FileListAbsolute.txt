@@ -1,0 +1,15 @@
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\bin\Debug\net10.0\PmsZafiro.Application.deps.json
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\bin\Debug\net10.0\PmsZafiro.Application.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\bin\Debug\net10.0\PmsZafiro.Application.pdb
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\bin\Debug\net10.0\PmsZafiro.Domain.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\bin\Debug\net10.0\PmsZafiro.Domain.pdb
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.csproj.AssemblyReference.cache
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.AssemblyInfoInputs.cache
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.AssemblyInfo.cs
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.csproj.CoreCompileInputs.cache
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafir.BD6C8EBC.Up2Date
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\refint\PmsZafiro.Application.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\PmsZafiro.Application.pdb
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\Application\obj\Debug\net10.0\ref\PmsZafiro.Application.dll

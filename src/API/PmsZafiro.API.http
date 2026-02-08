@@ -1,0 +1,6 @@
+@PmsZafiro.API_HostAddress = http://localhost:5100
+
+GET {{PmsZafiro.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
