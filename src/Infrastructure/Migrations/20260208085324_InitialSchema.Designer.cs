@@ -12,8 +12,8 @@ using PmsZafiro.Infrastructure.Persistence;
 namespace PmsZafiro.Infrastructure.Migrations
 {
     [DbContext(typeof(PmsDbContext))]
-    [Migration("20260208024719_InitialCreate")]
-    partial class InitialCreate
+    [Migration("20260208085324_InitialSchema")]
+    partial class InitialSchema
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -60,13 +60,48 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Type")
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("PmsZafiro.Domain.Entities.CashierShift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ActualAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("OpenedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<decimal>("StartingAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("SystemCalculatedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("UserId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
-                    b.ToTable("Notifications");
+                    b.ToTable("CashierShifts");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Folio", b =>
@@ -80,9 +115,8 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("nvarchar(8)");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -103,6 +137,9 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<Guid?>("CashierShiftId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -117,12 +154,14 @@ namespace PmsZafiro.Infrastructure.Migrations
                     b.Property<Guid>("FolioId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int>("PaymentMethod")
+                        .HasColumnType("int");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("int");
 
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
 
                     b.Property<decimal>("UnitPrice")
                         .HasPrecision(18, 2)
@@ -130,9 +169,11 @@ namespace PmsZafiro.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CashierShiftId");
+
                     b.HasIndex("FolioId");
 
-                    b.ToTable("Transactions");
+                    b.ToTable("FolioTransaction");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Guest", b =>
@@ -151,9 +192,8 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("DocumentType")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int>("DocumentType")
+                        .HasColumnType("int");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -186,65 +226,48 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Code")
+                    b.Property<int>("Adults")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CheckIn")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CheckOut")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Children")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ConfirmationCode")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
-                    b.Property<DateOnly>("EndDate")
-                        .HasColumnType("date");
-
-                    b.Property<Guid>("MainGuestId")
+                    b.Property<Guid>("GuestId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<Guid>("RoomId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateOnly>("StartDate")
-                        .HasColumnType("date");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MainGuestId");
+                    b.HasIndex("GuestId");
 
                     b.HasIndex("RoomId");
 
                     b.ToTable("Reservations");
-                });
-
-            modelBuilder.Entity("PmsZafiro.Domain.Entities.ReservationGuestDetail", b =>
-                {
-                    b.Property<Guid>("ReservationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("GuestId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<bool>("IsPrimary")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("OriginCity")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("OriginCountry")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("ReservationId", "GuestId");
-
-                    b.HasIndex("GuestId");
-
-                    b.ToTable("ReservationGuests");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Room", b =>
@@ -265,9 +288,8 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -294,7 +316,7 @@ namespace PmsZafiro.Infrastructure.Migrations
 
                     b.HasIndex("RoomId");
 
-                    b.ToTable("RoomPrices");
+                    b.ToTable("RoomPriceOverride");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.ExternalFolio", b =>
@@ -326,18 +348,25 @@ namespace PmsZafiro.Infrastructure.Migrations
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.FolioTransaction", b =>
                 {
+                    b.HasOne("PmsZafiro.Domain.Entities.CashierShift", "CashierShift")
+                        .WithMany("Transactions")
+                        .HasForeignKey("CashierShiftId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("PmsZafiro.Domain.Entities.Folio", null)
                         .WithMany("Transactions")
                         .HasForeignKey("FolioId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("CashierShift");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Reservation", b =>
                 {
-                    b.HasOne("PmsZafiro.Domain.Entities.Guest", "MainGuest")
-                        .WithMany()
-                        .HasForeignKey("MainGuestId")
+                    b.HasOne("PmsZafiro.Domain.Entities.Guest", "Guest")
+                        .WithMany("Reservations")
+                        .HasForeignKey("GuestId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -347,28 +376,9 @@ namespace PmsZafiro.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("MainGuest");
-
-                    b.Navigation("Room");
-                });
-
-            modelBuilder.Entity("PmsZafiro.Domain.Entities.ReservationGuestDetail", b =>
-                {
-                    b.HasOne("PmsZafiro.Domain.Entities.Guest", "Guest")
-                        .WithMany()
-                        .HasForeignKey("GuestId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("PmsZafiro.Domain.Entities.Reservation", "Reservation")
-                        .WithMany("Guests")
-                        .HasForeignKey("ReservationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.Navigation("Guest");
 
-                    b.Navigation("Reservation");
+                    b.Navigation("Room");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.RoomPriceOverride", b =>
@@ -391,14 +401,19 @@ namespace PmsZafiro.Infrastructure.Migrations
                     b.Navigation("Reservation");
                 });
 
+            modelBuilder.Entity("PmsZafiro.Domain.Entities.CashierShift", b =>
+                {
+                    b.Navigation("Transactions");
+                });
+
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Folio", b =>
                 {
                     b.Navigation("Transactions");
                 });
 
-            modelBuilder.Entity("PmsZafiro.Domain.Entities.Reservation", b =>
+            modelBuilder.Entity("PmsZafiro.Domain.Entities.Guest", b =>
                 {
-                    b.Navigation("Guests");
+                    b.Navigation("Reservations");
                 });
 
             modelBuilder.Entity("PmsZafiro.Domain.Entities.Room", b =>

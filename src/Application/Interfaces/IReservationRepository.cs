@@ -9,7 +9,6 @@ public interface IReservationRepository
     Task<Reservation> CreateAsync(Reservation reservation);
     Task UpdateAsync(Reservation reservation);
     Task<Reservation?> GetByCodeAsync(string code);
-    
-    // NUEVO: Método transaccional para el Check-Out
     Task ProcessCheckOutAsync(Reservation reservation, Room room, Folio folio);
+    Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId);
 }

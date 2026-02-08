@@ -32,7 +32,7 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.Id == id);
     }
 
-    // âœ… IMPLEMENTACIÃ“N FALTANTE 1: CreateAsync
+    // ✅ Implementación Faltante 1
     public async Task<Reservation> CreateAsync(Reservation reservation)
     {
         await _context.Reservations.AddAsync(reservation);
@@ -40,14 +40,13 @@ public class ReservationRepository : IReservationRepository
         return reservation;
     }
 
-    // âœ… IMPLEMENTACIÃ“N FALTANTE 2: UpdateAsync
     public async Task UpdateAsync(Reservation reservation)
     {
         _context.Reservations.Update(reservation);
         await _context.SaveChangesAsync();
     }
 
-    // âœ… IMPLEMENTACIÃ“N FALTANTE 3: GetByCodeAsync
+    // ✅ Implementación Faltante 2
     public async Task<Reservation?> GetByCodeAsync(string code)
     {
         return await _context.Reservations
@@ -56,14 +55,23 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.ConfirmationCode == code);
     }
 
-    // âœ… IMPLEMENTACIÃ“N FALTANTE 4: ProcessCheckOutAsync (Transaccional)
+    // ✅ Implementación Faltante 3: Transacción de Check-Out
     public async Task ProcessCheckOutAsync(Reservation reservation, Room room, Folio folio)
     {
-        // EF Core maneja esto como una transacciÃ³n implÃ­cita al llamar SaveChanges una sola vez
+        // Al usar el mismo contexto, SaveChanges aplica todo en una transacción implícita
         _context.Reservations.Update(reservation);
         _context.Rooms.Update(room);
         _context.Folios.Update(folio);
         
         await _context.SaveChangesAsync();
+    }
+    
+    // Método auxiliar útil para validaciones
+    public async Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId)
+    {
+         return await _context.Reservations
+            .Where(r => r.RoomId == roomId && 
+                       (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
+            .ToListAsync();
     }
 }

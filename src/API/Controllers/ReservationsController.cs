@@ -37,15 +37,18 @@ public class ReservationsController : ControllerBase
         var dtos = reservations.Select(r => new ReservationDto
         {
             Id = r.Id,
-            Code = r.Code,
+            Code = r.ConfirmationCode,
             Status = r.Status.ToString(),
-            MainGuestId = r.MainGuestId,
-            MainGuestName = r.MainGuest != null ? r.MainGuest.FullName : "Sin Nombre",
+            MainGuestId = r.GuestId,
+            MainGuestName = r.Guest != null ? r.Guest.FullName : "Sin Nombre",
             RoomId = r.RoomId,
             RoomNumber = r.Room != null ? r.Room.Number : "?",
-            StartDate = r.StartDate,
-            EndDate = r.EndDate,
-            Nights = r.Nights,
+            
+            // ✅ FIX: Convertir DateTime (Entidad) -> DateOnly (DTO)
+            StartDate = DateOnly.FromDateTime(r.CheckIn), 
+            EndDate = DateOnly.FromDateTime(r.CheckOut),   
+            
+            Nights = (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         });
         return Ok(dtos);
@@ -60,15 +63,18 @@ public class ReservationsController : ControllerBase
         var dto = new ReservationDto
         {
             Id = r.Id,
-            Code = r.Code,
+            Code = r.ConfirmationCode,
             Status = r.Status.ToString(),
-            MainGuestId = r.MainGuestId,
-            MainGuestName = r.MainGuest?.FullName ?? "Desconocido",
+            MainGuestId = r.GuestId,
+            MainGuestName = r.Guest?.FullName ?? "Desconocido",
             RoomId = r.RoomId,
             RoomNumber = r.Room?.Number ?? "?",
-            StartDate = r.StartDate,
-            EndDate = r.EndDate,
-            Nights = r.Nights,
+            
+            // ✅ FIX: Convertir DateTime (Entidad) -> DateOnly (DTO)
+            StartDate = DateOnly.FromDateTime(r.CheckIn),
+            EndDate = DateOnly.FromDateTime(r.CheckOut),
+            
+            Nights = (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         };
         return Ok(dto);
@@ -77,18 +83,24 @@ public class ReservationsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
+        // Asumiendo que CreateReservationDto también usa DateOnly para ser consistente con ReservationDto
         var reservation = new Reservation
         {
-            MainGuestId = dto.MainGuestId,
+            GuestId = dto.MainGuestId,
             RoomId = dto.RoomId,
-            StartDate = dto.StartDate,
-            EndDate = dto.EndDate,
+            
+            // ✅ FIX: Convertir DateOnly (DTO) -> DateTime (Entidad)
+            CheckIn = dto.StartDate.ToDateTime(TimeOnly.MinValue), 
+            CheckOut = dto.EndDate.ToDateTime(TimeOnly.MinValue),    
+            
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         };
 
         await _repository.CreateAsync(reservation);
-        return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.Code });
+        
+        // Retornamos usando el helper para asegurar formato correcto
+        return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
     }
 
     [HttpPost("booking")]
@@ -119,10 +131,16 @@ public class ReservationsController : ControllerBase
 
         var reservation = new Reservation
         {
-            MainGuestId = guest.Id,
+            GuestId = guest.Id,
             RoomId = dto.RoomId,
-            StartDate = dto.CheckIn,
-            EndDate = dto.CheckOut,
+            
+            // ✅ FIX: Validamos el tipo de dto.CheckIn. 
+            // Si en tu DTO CreateBookingRequestDto usas DateOnly, usa .ToDateTime(TimeOnly.MinValue)
+            // Si usas DateTime, déjalo directo. 
+            // Aquí asumo DateOnly por consistencia con tu reporte de errores.
+            CheckIn = dto.CheckIn.ToDateTime(TimeOnly.MinValue),
+            CheckOut = dto.CheckOut.ToDateTime(TimeOnly.MinValue),
+            
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -131,15 +149,14 @@ public class ReservationsController : ControllerBase
 
         await _notificationRepository.AddAsync(
             "Nueva Reserva Web", 
-            $"Reserva {reservation.Code} creada para {guest.FullName}", 
+            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}", 
             NotificationType.Success,
             $"/reservas/{reservation.Id}"
         );
 
-        return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.Code });
+        return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
     }
 
-    // NUEVO ENDPOINT: CHECK-IN
     [HttpPost("{id}/checkin")]
     public async Task<IActionResult> CheckIn(Guid id)
     {
@@ -149,11 +166,9 @@ public class ReservationsController : ControllerBase
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest("El estado de la reserva no permite Check-in.");
 
-        // 1. Actualizar estado de Reserva
         reservation.Status = ReservationStatus.CheckedIn;
-        await _repository.UpdateAsync(reservation); // Asumiendo que existe UpdateAsync en repo
+        await _repository.UpdateAsync(reservation);
 
-        // 2. Actualizar estado de Habitación
         var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
         if (room != null)
         {
@@ -161,7 +176,6 @@ public class ReservationsController : ControllerBase
             await _roomRepository.UpdateAsync(room);
         }
 
-        // 3. Crear Folio del Huésped automáticamente
         var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
         if (existingFolio == null)
         {
@@ -175,7 +189,7 @@ public class ReservationsController : ControllerBase
 
         await _notificationRepository.AddAsync(
             "Check-in Realizado", 
-            $"Huésped {reservation.MainGuest?.FullName} ingresó a habitación {room?.Number}", 
+            $"Huésped {reservation.Guest?.FullName} ingresó a habitación {room?.Number}", 
             NotificationType.Info, 
             $"/folios"
         );
@@ -194,7 +208,6 @@ public class ReservationsController : ControllerBase
 
         var folio = await _folioRepository.GetByReservationIdAsync(id);
         
-        // Validación de deuda: No permitir checkout si hay saldo > 0
         if (folio != null && folio.Balance > 0)
         {
             return BadRequest(new { 

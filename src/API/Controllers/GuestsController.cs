@@ -23,7 +23,8 @@ public class GuestsController : ControllerBase
         var guests = await _repository.GetAllWithHistoryAsync();
         
         var dtos = guests.Select(g => {
-            var lastRes = g.Reservations.OrderByDescending(r => r.EndDate).FirstOrDefault();
+            // ✅ Corrección: EndDate -> CheckOut
+            var lastRes = g.Reservations.OrderByDescending(r => r.CheckOut).FirstOrDefault();
             var isActive = g.Reservations.Any(r => r.Status == ReservationStatus.CheckedIn);
 
             return new GuestDto
@@ -36,7 +37,8 @@ public class GuestsController : ControllerBase
                 Phone = g.Phone,
                 Nationality = g.Nationality,
                 TotalStays = g.Reservations.Count(r => r.Status != ReservationStatus.Cancelled),
-                LastStayDate = lastRes?.EndDate.ToDateTime(TimeOnly.MinValue),
+                // ✅ Corrección: Manejo seguro de fecha nula y tipo DateTime
+                LastStayDate = lastRes?.CheckOut, 
                 CurrentStatus = isActive ? "in-house" : "previous"
             };
         });

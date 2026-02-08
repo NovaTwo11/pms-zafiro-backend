@@ -21,22 +21,29 @@ public class FoliosController : ControllerBase
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
         var folios = await _repository.GetActiveGuestFoliosAsync();
-        // Mapeo manual simple para la lista
+        
+        // Corrección: Usamos CheckIn/CheckOut en lugar de StartDate/EndDate
         var result = folios.Select(f => {
             var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+            
+            // Calculamos noches de forma segura
+            var nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
+            if (nights < 1) nights = 1;
+
             return new 
             {
                 Id = f.Id,
                 Status = f.Status.ToString(),
                 Balance = charges - payments,
-                GuestName = f.Reservation.MainGuest?.FullName ?? "Desconocido",
+                GuestName = f.Reservation.Guest?.FullName ?? "Desconocido",
                 RoomNumber = f.Reservation.Room?.Number ?? "?",
-                CheckIn = f.Reservation.StartDate,
-                CheckOut = f.Reservation.EndDate,
-                Nights = f.Reservation.Nights
+                CheckIn = f.Reservation.CheckIn,   // ✅ Corregido
+                CheckOut = f.Reservation.CheckOut, // ✅ Corregido
+                Nights = nights
             };
         });
+        
         return Ok(result);
     }
 
@@ -54,7 +61,7 @@ public class FoliosController : ControllerBase
                 Balance = charges - payments,
                 Alias = f.Alias,
                 Description = f.Description,
-                CreatedAt = DateTime.Now // Ajustar si tienes fecha de creación en Folio base
+                CreatedAt = DateTime.Now // Ajustar si agregas propiedad CreatedAt a Folio
             };
         });
         return Ok(result);
@@ -103,11 +110,11 @@ public class FoliosController : ControllerBase
             FolioId = id,
             Amount = dto.Amount,
             Description = dto.Description,
-            Type = dto.Type, // Enum string conversion handleado por JSON
+            Type = dto.Type, 
             Quantity = dto.Quantity,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
             CreatedAt = DateTimeOffset.UtcNow,
-            CreatedByUserId = "Admin"
+            CreatedByUserId = "Admin" // TODO: Obtener del contexto de usuario real
         };
 
         await _repository.AddTransactionAsync(transaction);

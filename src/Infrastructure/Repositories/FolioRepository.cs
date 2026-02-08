@@ -27,7 +27,7 @@ public class FolioRepository : IFolioRepository
         return await _context.Folios
             .OfType<GuestFolio>()
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation) // Incluir datos de la reserva si es necesario
+            .Include(f => f.Reservation) 
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
     }
 
@@ -55,7 +55,7 @@ public class FolioRepository : IFolioRepository
             .OfType<GuestFolio>()
             .Include(f => f.Transactions)
             .Include(f => f.Reservation)
-            .ThenInclude(r => r.MainGuest)
+            .ThenInclude(r => r.Guest) // ✅ CORREGIDO: MainGuest -> Guest
             .Include(f => f.Reservation)
             .ThenInclude(r => r.Room)
             .Where(f => f.Status == FolioStatus.Open)
