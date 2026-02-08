@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
+using PmsZafiro.Domain.Enums;
 using PmsZafiro.Infrastructure.Persistence;
 
 namespace PmsZafiro.Infrastructure.Repositories;
@@ -17,22 +18,56 @@ public class FolioRepository : IFolioRepository
     public async Task<Folio?> GetByIdAsync(Guid id)
     {
         return await _context.Folios
-            .Include(f => f.Transactions.OrderByDescending(t => t.CreatedAt))
+            .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.Id == id);
     }
 
-    public async Task<Folio?> GetByReservationIdAsync(Guid reservationId)
+    public async Task<GuestFolio?> GetByReservationIdAsync(Guid reservationId)
     {
-        // Buscamos el GuestFolio asociado a esa reserva
         return await _context.Folios
-            .OfType<GuestFolio>() // Filtramos solo folios de huésped
-            .Include(f => f.Transactions.OrderByDescending(t => t.CreatedAt))
+            .OfType<GuestFolio>()
+            .Include(f => f.Transactions)
+            .Include(f => f.Reservation) // Incluir datos de la reserva si es necesario
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
+    }
+
+    public async Task CreateAsync(Folio folio)
+    {
+        await _context.Folios.AddAsync(folio);
+        await _context.SaveChangesAsync();
     }
 
     public async Task AddTransactionAsync(FolioTransaction transaction)
     {
-        _context.Transactions.Add(transaction);
+        await _context.Set<FolioTransaction>().AddAsync(transaction);
         await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateAsync(Folio folio)
+    {
+        _context.Folios.Update(folio);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<IEnumerable<GuestFolio>> GetActiveGuestFoliosAsync()
+    {
+        return await _context.Folios
+            .OfType<GuestFolio>()
+            .Include(f => f.Transactions)
+            .Include(f => f.Reservation)
+            .ThenInclude(r => r.MainGuest)
+            .Include(f => f.Reservation)
+            .ThenInclude(r => r.Room)
+            .Where(f => f.Status == FolioStatus.Open)
+            .ToListAsync();
+    }
+
+    public async Task<IEnumerable<ExternalFolio>> GetActiveExternalFoliosAsync()
+    {
+        return await _context.Folios
+            .OfType<ExternalFolio>()
+            .Include(f => f.Transactions)
+            .Where(f => f.Status == FolioStatus.Open)
+            .ToListAsync();
     }
 }

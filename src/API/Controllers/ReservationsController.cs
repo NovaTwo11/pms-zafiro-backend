@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using PmsZafiro.Application.DTOs.Reservations;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
@@ -139,6 +139,50 @@ public class ReservationsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.Code });
     }
 
+    // NUEVO ENDPOINT: CHECK-IN
+    [HttpPost("{id}/checkin")]
+    public async Task<IActionResult> CheckIn(Guid id)
+    {
+        var reservation = await _repository.GetByIdAsync(id);
+        if (reservation == null) return NotFound("Reserva no encontrada");
+
+        if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
+            return BadRequest("El estado de la reserva no permite Check-in.");
+
+        // 1. Actualizar estado de Reserva
+        reservation.Status = ReservationStatus.CheckedIn;
+        await _repository.UpdateAsync(reservation); // Asumiendo que existe UpdateAsync en repo
+
+        // 2. Actualizar estado de Habitación
+        var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
+        if (room != null)
+        {
+            room.Status = RoomStatus.Occupied;
+            await _roomRepository.UpdateAsync(room);
+        }
+
+        // 3. Crear Folio del Huésped automáticamente
+        var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
+        if (existingFolio == null)
+        {
+            var folio = new GuestFolio
+            {
+                ReservationId = id,
+                Status = FolioStatus.Open
+            };
+            await _folioRepository.CreateAsync(folio);
+        }
+
+        await _notificationRepository.AddAsync(
+            "Check-in Realizado", 
+            $"Huésped {reservation.MainGuest?.FullName} ingresó a habitación {room?.Number}", 
+            NotificationType.Info, 
+            $"/folios"
+        );
+
+        return Ok(new { message = "Check-in exitoso y Folio creado.", status = "CheckedIn" });
+    }
+
     [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
@@ -149,9 +193,9 @@ public class ReservationsController : ControllerBase
             return BadRequest("La reserva ya hizo Check-out.");
 
         var folio = await _folioRepository.GetByReservationIdAsync(id);
-        if (folio == null) return BadRequest("Error crítico: Reserva sin folio.");
         
-        if (folio.Balance > 0)
+        // Validación de deuda: No permitir checkout si hay saldo > 0
+        if (folio != null && folio.Balance > 0)
         {
             return BadRequest(new { 
                 error = "DeudaPendiente", 
@@ -165,7 +209,7 @@ public class ReservationsController : ControllerBase
         await _repository.ProcessCheckOutAsync(reservation, room, folio);
         
         await _notificationRepository.AddAsync(
-            "Salida Confirmada", 
+            "Salida Confirmada" ,
             $"La habitación {room.Number} está libre y requiere limpieza.", 
             NotificationType.Warning, 
             $"/habitaciones"

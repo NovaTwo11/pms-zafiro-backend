@@ -1,0 +1,1 @@
+namespace PmsZafiro.Application.DTOs.Cashier; public record OpenShiftDto(decimal StartingAmount);

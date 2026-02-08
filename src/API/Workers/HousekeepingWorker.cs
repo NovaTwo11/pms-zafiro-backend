@@ -1,5 +1,6 @@
-﻿using PmsZafiro.Application.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Domain.Enums;
+using PmsZafiro.Infrastructure.Persistence;
 
 namespace PmsZafiro.API.Workers;
 
@@ -16,46 +17,83 @@ public class HousekeepingWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("🧹 Housekeeping Worker iniciado. Programado para las 06:00 AM.");
+        _logger.LogInformation("Housekeeping Worker iniciado.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // 1. Calcular cuánto falta para las próximas 6:00 AM
             var now = DateTime.Now;
+            
+            // Configuración: Ejecutar a las 6:00 AM
             var nextRun = now.Date.AddHours(6);
-            if (now >= nextRun) nextRun = nextRun.AddDays(1);
+            
+            // Si ya pasaron las 6 AM de hoy, programar para mañana
+            if (now >= nextRun)
+            {
+                nextRun = nextRun.AddDays(1);
+            }
 
             var delay = nextRun - now;
-            _logger.LogInformation($"Dormiré durante {delay.TotalHours:N2} horas hasta el próximo ciclo de limpieza.");
+            _logger.LogInformation($"Próxima ejecución de limpieza automática en: {delay.TotalHours:N2} horas ({nextRun:dd/MM/yyyy HH:mm})");
 
-            // 2. Esperar
-            await Task.Delay(delay, stoppingToken);
+            // Esperar hasta la hora programada
+            try 
+            {
+                await Task.Delay(delay, stoppingToken);
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
 
-            // 3. ¡Ejecutar la magia!
-            await SetAllCleanRoomsToDirty();
+            try
+            {
+                await RunDailyHousekeepingLogic();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error ejecutando lógica de limpieza diaria");
+            }
         }
     }
 
-    private async Task SetAllCleanRoomsToDirty()
+    private async Task RunDailyHousekeepingLogic()
     {
         using (var scope = _serviceProvider.CreateScope())
         {
-            var roomRepo = scope.ServiceProvider.GetRequiredService<IRoomRepository>();
-            var rooms = await roomRepo.GetAllAsync();
+            var context = scope.ServiceProvider.GetRequiredService<PmsDbContext>();
+            
+            _logger.LogInformation("Ejecutando reglas de limpieza diaria (6:00 AM)...");
 
-            int count = 0;
-            foreach (var room in rooms)
+            // --- REGLA 1: LIMPIEZA DIARIA DE HABITACIONES OCUPADAS ---
+            // Busca habitaciones que están actualmente marcadas como OCUPADAS.
+            // Las pasa a estado SUCIA para indicar que requieren servicio de camarera.
+            // Nota: El frontend debe saber que si hay una reserva activa, 'Sucia' significa 'Ocupada/Sucia'.
+            
+            var occupiedRooms = await context.Rooms
+                .Where(r => r.Status == RoomStatus.Occupied)
+                .ToListAsync();
+
+            int updatedCount = 0;
+            foreach (var room in occupiedRooms)
             {
-                // REGLA: Si está Limpia (Available) -> Pasa a Sucia (Dirty)
-                // Ignoramos las que ya están Ocupadas, Mantenimiento o Bloqueadas
-                if (room.Status == RoomStatus.Available) 
-                {
-                    room.Status = RoomStatus.Dirty;
-                    await roomRepo.UpdateAsync(room);
-                    count++;
-                }
+                room.Status = RoomStatus.Dirty; 
+                updatedCount++;
             }
-            _logger.LogInformation($"✅ AUTO-LIMPIEZA: Se marcaron {count} habitaciones como Sucias.");
+
+            // --- REGLA 2: MANTENIMIENTOS VENCIDOS (Placeholder) ---
+            // Aquí se puede agregar lógica para liberar habitaciones cuyo mantenimiento haya finalizado ayer.
+            // var maintenanceFinished = await context.Rooms.Where(r => r.Status == RoomStatus.Maintenance && r.MaintenanceEndDate < DateTime.Now).ToListAsync();
+            // foreach(var r in maintenanceFinished) r.Status = RoomStatus.Dirty; // Para limpieza post-mantenimiento
+
+            if (updatedCount > 0)
+            {
+                await context.SaveChangesAsync();
+                _logger.LogInformation($"Housekeeping: Se marcaron {updatedCount} habitaciones ocupadas como 'Sucias' para limpieza diaria.");
+            }
+            else
+            {
+                _logger.LogInformation("Housekeeping: No se encontraron habitaciones ocupadas para marcar.");
+            }
         }
     }
 }

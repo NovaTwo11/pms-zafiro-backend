@@ -17,7 +17,63 @@ public class FoliosController : ControllerBase
         _repository = repository;
     }
 
-    // GET api/folios/reservation/{id}
+    [HttpGet("active-guests")]
+    public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
+    {
+        var folios = await _repository.GetActiveGuestFoliosAsync();
+        // Mapeo manual simple para la lista
+        var result = folios.Select(f => {
+            var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
+            var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+            return new 
+            {
+                Id = f.Id,
+                Status = f.Status.ToString(),
+                Balance = charges - payments,
+                GuestName = f.Reservation.MainGuest?.FullName ?? "Desconocido",
+                RoomNumber = f.Reservation.Room?.Number ?? "?",
+                CheckIn = f.Reservation.StartDate,
+                CheckOut = f.Reservation.EndDate,
+                Nights = f.Reservation.Nights
+            };
+        });
+        return Ok(result);
+    }
+
+    [HttpGet("active-externals")]
+    public async Task<ActionResult<IEnumerable<object>>> GetActiveExternals()
+    {
+        var folios = await _repository.GetActiveExternalFoliosAsync();
+        var result = folios.Select(f => {
+            var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
+            var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+            return new 
+            {
+                Id = f.Id,
+                Status = f.Status.ToString(),
+                Balance = charges - payments,
+                Alias = f.Alias,
+                Description = f.Description,
+                CreatedAt = DateTime.Now // Ajustar si tienes fecha de creación en Folio base
+            };
+        });
+        return Ok(result);
+    }
+
+    [HttpPost("external")]
+    public async Task<IActionResult> CreateExternal([FromBody] CreateExternalFolioDto dto)
+    {
+        var folio = new ExternalFolio
+        {
+            Alias = dto.Alias,
+            Description = dto.Description,
+            Status = FolioStatus.Open
+        };
+        
+        await _repository.CreateAsync(folio);
+        return Ok(new { id = folio.Id, message = "Folio externo creado" });
+    }
+
     [HttpGet("reservation/{reservationId}")]
     public async Task<ActionResult<FolioDto>> GetByReservation(Guid reservationId)
     {
@@ -27,7 +83,6 @@ public class FoliosController : ControllerBase
         return Ok(MapToDto(folio));
     }
 
-    // GET api/folios/{id}
     [HttpGet("{id}")]
     public async Task<ActionResult<FolioDto>> GetById(Guid id)
     {
@@ -37,7 +92,6 @@ public class FoliosController : ControllerBase
         return Ok(MapToDto(folio));
     }
 
-    // POST api/folios/{id}/transactions
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
@@ -49,10 +103,11 @@ public class FoliosController : ControllerBase
             FolioId = id,
             Amount = dto.Amount,
             Description = dto.Description,
-            Type = dto.Type,
+            Type = dto.Type, // Enum string conversion handleado por JSON
             Quantity = dto.Quantity,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
-            CreatedByUserId = "Admin" // En el futuro vendrá del Token JWT
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedByUserId = "Admin"
         };
 
         await _repository.AddTransactionAsync(transaction);
@@ -60,7 +115,6 @@ public class FoliosController : ControllerBase
         return Ok(new { message = "Transacción agregada", transactionId = transaction.Id });
     }
 
-    // Método auxiliar para convertir Entidad -> DTO y calcular saldos
     private FolioDto MapToDto(Folio folio)
     {
         var charges = folio.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
@@ -74,7 +128,7 @@ public class FoliosController : ControllerBase
             Balance = charges - payments,
             TotalCharges = charges,
             TotalPayments = payments,
-            Transactions = folio.Transactions.Select(t => new FolioTransactionDto
+            Transactions = folio.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioTransactionDto
             {
                 Id = t.Id,
                 Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),

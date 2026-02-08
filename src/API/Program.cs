@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Infrastructure.Persistence;
 using PmsZafiro.Application.Interfaces;
+using PmsZafiro.Application.Services;
 using PmsZafiro.Infrastructure.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,6 +26,8 @@ builder.Services.AddScoped<IReservationRepository, ReservationRepository>();
 builder.Services.AddScoped<IGuestRepository, GuestRepository>();
 builder.Services.AddScoped<IRoomRepository, RoomRepository>();
 builder.Services.AddScoped<IFolioRepository, FolioRepository>();
+builder.Services.AddScoped<ICashierRepository, CashierRepository>();
+builder.Services.AddScoped<CashierService>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddHostedService<PmsZafiro.API.Workers.HousekeepingWorker>();
 
