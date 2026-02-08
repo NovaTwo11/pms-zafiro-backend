@@ -1,3 +1,18 @@
+# fix_enums.ps1
+
+# Detectar ruta src
+$CurrentLocation = Get-Location
+$SrcPath = Join-Path $CurrentLocation "src"
+
+if (-not (Test-Path $SrcPath)) {
+    Write-Error "❌ No se encuentra la carpeta 'src'. Ejecuta esto en la raíz del proyecto."
+    exit
+}
+
+$EnumsPath = Join-Path $SrcPath "Domain/Enums/Enums.cs"
+
+# Contenido corregido con TODOS los Enums necesarios
+$EnumsContent = @"
 namespace PmsZafiro.Domain.Enums;
 
 // --- Nuevas Categorías (Requerimiento) ---
@@ -77,3 +92,8 @@ public enum TransactionType
     Payment,
     Adjustment
 }
+"@
+
+Set-Content -Path $EnumsPath -Value $EnumsContent
+Write-Host "✅ Enums.cs reparado exitosamente en: $EnumsPath" -ForegroundColor Green
+Write-Host "🔄 Ahora intenta compilar de nuevo con 'dotnet build'." -ForegroundColor Cyan

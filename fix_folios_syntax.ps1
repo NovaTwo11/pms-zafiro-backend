@@ -1,3 +1,46 @@
+# fix_folios_syntax.ps1
+
+$CurrentLocation = Get-Location
+$SrcPath = Join-Path $CurrentLocation "src"
+
+if (-not (Test-Path $SrcPath)) { Write-Error "❌ Ejecuta esto en la raíz del proyecto."; exit }
+
+$DtoPath = Join-Path $SrcPath "Application/DTOs/Folios/CreateTransactionDto.cs"
+$ControllerPath = Join-Path $SrcPath "API/Controllers/FoliosController.cs"
+
+# ---------------------------------------------------------
+# 1. REPARAR DTO (CreateTransactionDto.cs)
+# Usamos @' para strings literales (sin escapar comillas)
+# ---------------------------------------------------------
+$DtoContent = @'
+using System.ComponentModel.DataAnnotations;
+using PmsZafiro.Domain.Enums;
+
+namespace PmsZafiro.Application.DTOs.Folios;
+
+public class CreateTransactionDto
+{
+    [Required] public decimal Amount { get; set; }
+    [Required] public string Description { get; set; } = string.Empty;
+    [Required] public TransactionType Type { get; set; } 
+    public int Quantity { get; set; } = 1;
+    public decimal UnitPrice { get; set; }
+    
+    // Propiedades para POS
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.None;
+    public Guid? CashierShiftId { get; set; }
+    public string? Category { get; set; } // Se recibe del front pero no se guarda si la entidad no lo tiene
+}
+'@
+
+Set-Content -Path $DtoPath -Value $DtoContent
+Write-Host "✅ CreateTransactionDto.cs reparado." -ForegroundColor Green
+
+# ---------------------------------------------------------
+# 2. REPARAR CONTROLADOR (FoliosController.cs)
+# Eliminamos la asignación a 'Category' que causaba error CS0117
+# ---------------------------------------------------------
+$ControllerContent = @'
 using Microsoft.AspNetCore.Mvc;
 using PmsZafiro.Application.DTOs.Folios;
 using PmsZafiro.Application.Interfaces;
@@ -107,3 +150,8 @@ public class FoliosController : ControllerBase
         };
     }
 }
+'@
+
+Set-Content -Path $ControllerPath -Value $ControllerContent
+Write-Host "✅ FoliosController.cs reparado sin errores de sintaxis." -ForegroundColor Green
+Write-Host "🚀 Ejecuta 'dotnet run --project src/API/PmsZafiro.API.csproj' ahora." -ForegroundColor Cyan

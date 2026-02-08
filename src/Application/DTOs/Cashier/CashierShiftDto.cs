@@ -1,1 +1,11 @@
-using PmsZafiro.Domain.Enums; namespace PmsZafiro.Application.DTOs.Cashier; public record CashierShiftDto(Guid Id, string UserId, DateTimeOffset OpenedAt, DateTimeOffset? ClosedAt, decimal StartingAmount, decimal SystemCalculatedAmount, decimal ActualAmount, CashierShiftStatus Status);
+using PmsZafiro.Domain.Enums; 
+namespace PmsZafiro.Application.DTOs.Cashier; 
+public record CashierShiftDto(
+    Guid Id, 
+    string UserId, 
+    DateTimeOffset OpenedAt, 
+    DateTimeOffset? ClosedAt, 
+    decimal StartingAmount, 
+    decimal SystemCalculatedAmount, 
+    decimal ActualAmount, 
+    CashierShiftStatus Status);
