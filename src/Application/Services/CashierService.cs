@@ -25,6 +25,26 @@ public class CashierService
         return MapToDto(shift);
     }
 
+    public async Task<CashierReportDto?> GetCurrentShiftReportAsync(string userId)
+    {
+        // Obtenemos el turno abierto con sus transacciones (gracias al Include del repositorio)
+        var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
+        if (shift == null) return null;
+
+        // Filtramos transacciones del turno actual
+        var payments = shift.Transactions.Where(t => t.Type == TransactionType.Payment).ToList();
+        var charges = shift.Transactions.Where(t => t.Type == TransactionType.Charge).ToList();
+
+        return new CashierReportDto(
+            TotalIncome: payments.Sum(t => t.Amount),
+            TotalCash: payments.Where(t => t.PaymentMethod == PaymentMethod.Cash).Sum(t => t.Amount),
+            TotalCards: payments.Where(t => t.PaymentMethod == PaymentMethod.CreditCard || t.PaymentMethod == PaymentMethod.DebitCard).Sum(t => t.Amount),
+            TotalTransfers: payments.Where(t => t.PaymentMethod == PaymentMethod.Transfer).Sum(t => t.Amount),
+            TotalRoomCharges: charges.Sum(t => t.Amount),
+            TotalTransactions: shift.Transactions.Count
+        );
+    }
+    
     public async Task<CashierShiftDto> CloseShiftAsync(string userId, decimal actualAmount)
     {
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);

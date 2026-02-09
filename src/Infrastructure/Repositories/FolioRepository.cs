@@ -27,11 +27,20 @@ public class FolioRepository : IFolioRepository
         return await _context.Folios
             .OfType<GuestFolio>()
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation) 
+            .Include(f => f.Reservation) // Importante para validaciones
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
     }
 
-    public async Task CreateAsync(Folio folio)
+    // Implementación de GetAllAsync para el filtro de externos
+    public async Task<IEnumerable<Folio>> GetAllAsync()
+    {
+        return await _context.Folios
+            .Include(f => f.Transactions)
+            .ToListAsync();
+    }
+
+    // Implementación de AddAsync (antes CreateAsync)
+    public async Task AddAsync(Folio folio)
     {
         await _context.Folios.AddAsync(folio);
         await _context.SaveChangesAsync();
@@ -53,11 +62,11 @@ public class FolioRepository : IFolioRepository
     {
         return await _context.Folios
             .OfType<GuestFolio>()
+            .Include(f => f.Reservation)
+                .ThenInclude(r => r.Guest)
+            .Include(f => f.Reservation)
+                .ThenInclude(r => r.Room)
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation)
-            .ThenInclude(r => r.Guest) // ✅ CORREGIDO: MainGuest -> Guest
-            .Include(f => f.Reservation)
-            .ThenInclude(r => r.Room)
             .Where(f => f.Status == FolioStatus.Open)
             .ToListAsync();
     }

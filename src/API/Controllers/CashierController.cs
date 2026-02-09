@@ -32,4 +32,13 @@ public class CashierController : ControllerBase
         try { return Ok(await _service.CloseShiftAsync("user1", dto.ActualAmount)); }
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
     }
+    
+    [HttpGet("report")]
+    public async Task<ActionResult<CashierReportDto>> GetCurrentReport()
+    {
+        // "user1" es hardcoded por ahora, luego vendrá del JWT
+        var report = await _service.GetCurrentShiftReportAsync("user1");
+        if (report == null) return NotFound("No hay turno abierto para generar reporte.");
+        return Ok(report);
+    }
 }

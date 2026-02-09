@@ -17,6 +17,7 @@ public class FoliosController : ControllerBase
         _repository = repository;
     }
 
+    // 1. Endpoint Existente: Huéspedes
     [HttpGet("active-guests")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
@@ -26,22 +27,57 @@ public class FoliosController : ControllerBase
             var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
             
-            var nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
-            if (nights < 1) nights = 1;
+            var nights = 0;
+            if (f.Reservation != null) // Validación de seguridad
+            {
+                nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
+                if (nights < 1) nights = 1;
+            }
 
             return new 
             {
                 Id = f.Id,
+                Type = "guest",
                 Status = f.Status.ToString(),
                 Balance = charges - payments,
-                GuestName = f.Reservation.Guest?.FullName ?? "Desconocido",
-                RoomNumber = f.Reservation.Room?.Number ?? "?",
-                CheckIn = f.Reservation.CheckIn,
-                CheckOut = f.Reservation.CheckOut,
+                GuestName = f.Reservation?.Guest?.FullName ?? "Desconocido",
+                RoomNumber = f.Reservation?.Room?.Number ?? "?",
+                CheckIn = f.Reservation?.CheckIn,
+                CheckOut = f.Reservation?.CheckOut,
                 Nights = nights
             };
         });
         
+        return Ok(result);
+    }
+
+    // 2. NUEVO ENDPOINT: Externos / Pasadías
+    // Soluciona el error 400 al evitar que caiga en el endpoint {id}
+    [HttpGet("active-externals")]
+    public async Task<ActionResult<IEnumerable<object>>> GetActiveExternals()
+    {
+        // Nota: Asegúrate de tener este método en tu IFolioRepository o usa GetAll y filtra aquí
+        // Si no lo tienes en el repo, avísame para darte el código del repositorio.
+        // Asumiremos por ahora que puedes filtrar o que agregarás el método.
+        var allFolios = await _repository.GetAllAsync(); 
+        var externals = allFolios.OfType<ExternalFolio>().Where(f => f.Status == FolioStatus.Open).ToList();
+
+        var result = externals.Select(f => {
+            var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
+            var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+
+            return new 
+            {
+                Id = f.Id,
+                Type = "external",
+                Status = f.Status.ToString(),
+                Balance = charges - payments,
+                Alias = f.Alias ?? "Cliente Externo",
+                Description = f.Description,
+                CreatedAt = f.CreatedAt
+            };
+        });
+
         return Ok(result);
     }
 
@@ -52,6 +88,23 @@ public class FoliosController : ControllerBase
         if (folio == null) return NotFound();
 
         return Ok(MapToDto(folio));
+    }
+
+    // 3. NUEVO ENDPOINT: Crear Folio Externo
+    [HttpPost("external")]
+    public async Task<IActionResult> CreateExternalFolio([FromBody] CreateExternalFolioDto dto)
+    {
+        var folio = new ExternalFolio
+        {
+            Alias = dto.Alias,
+            Description = dto.Description,
+            Status = FolioStatus.Open,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.AddAsync(folio); // Asegúrate que tu repositorio tenga AddAsync genérico o para Folio
+
+        return CreatedAtAction(nameof(GetById), new { id = folio.Id }, new { id = folio.Id, message = "Folio externo creado" });
     }
 
     [HttpPost("{id}/transactions")]
@@ -68,7 +121,6 @@ public class FoliosController : ControllerBase
             Type = dto.Type, 
             Quantity = dto.Quantity,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
-            // Eliminamos Category porque la entidad FolioTransaction no la tiene
             PaymentMethod = dto.PaymentMethod,
             CashierShiftId = dto.CashierShiftId,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -85,10 +137,9 @@ public class FoliosController : ControllerBase
         var charges = folio.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
         var payments = folio.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
         
-        return new FolioDto
+        var dto = new FolioDto
         {
             Id = folio.Id,
-            ReservationId = (folio as GuestFolio)?.ReservationId,
             Status = folio.Status.ToString(),
             Balance = charges - payments,
             TotalCharges = charges,
@@ -102,8 +153,24 @@ public class FoliosController : ControllerBase
                 Type = t.Type.ToString(),
                 UnitPrice = t.UnitPrice,
                 Quantity = t.Quantity,
-                User = t.CreatedByUserId
+                User = t.CreatedByUserId,
+                PaymentMethod = t.PaymentMethod // Agregamos esto si lo tienes en el DTO para visualización
             }).ToList()
         };
+
+        // Mapeo condicional según el tipo
+        if (folio is GuestFolio guestFolio)
+        {
+            dto.ReservationId = guestFolio.ReservationId;
+            dto.GuestName = guestFolio.Reservation?.Guest?.FullName;
+            dto.RoomNumber = guestFolio.Reservation?.Room?.Number;
+        }
+        else if (folio is ExternalFolio externalFolio)
+        {
+            dto.Alias = externalFolio.Alias;
+            dto.Description = externalFolio.Description;
+        }
+
+        return dto;
     }
 }
