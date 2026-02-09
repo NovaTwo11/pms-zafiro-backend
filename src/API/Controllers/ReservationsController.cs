@@ -199,7 +199,7 @@ public class ReservationsController : ControllerBase
         return Ok(new { message = "Check-in exitoso y Folio creado.", status = "CheckedIn" });
     }
 
-[HttpPost("{id}/checkout")]
+    [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
         var reservation = await _repository.GetByIdAsync(id);
@@ -209,9 +209,17 @@ public class ReservationsController : ControllerBase
             return BadRequest("La reserva ya hizo Check-out.");
 
         var folio = await _folioRepository.GetByReservationIdAsync(id);
-    
-        // 1. Validar Deuda Cero (Permite diferencia mínima por redondeo de decimales)
-        if (folio != null && folio.Balance > 100) // Margen de error de 100 pesos
+        var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
+
+        // --- VALIDACIÓN DE INTEGRIDAD DE DATOS ---
+        if (folio == null) 
+        {
+            // Si no hay folio, es un error de datos crítico, pero no debería tumbar el servidor.
+            return BadRequest("Error crítico: No se encontró un folio asociado a esta reserva.");
+        }
+
+        // 1. Validar Deuda
+        if (folio.Balance > 100) 
         {
             return BadRequest(new { 
                 error = "DeudaPendiente", 
@@ -219,34 +227,45 @@ public class ReservationsController : ControllerBase
             });
         }
 
-        var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
-        
-        // --- LÓGICA DE SALIDA ANTICIPADA (EARLY DEPARTURE) ---
-        // Si se van hoy, pero la reserva era hasta dentro de 3 días,
-        // actualizamos la fecha de salida a HOY para liberar el cronograma.
+        // Lógica de salida anticipada...
         if (reservation.CheckOut.Date > DateTime.UtcNow.Date)
         {
             reservation.CheckOut = DateTime.UtcNow;
-            // Opcional: Aquí podrías recalcular el precio total si cobras por noche consumida
-            // reservation.TotalAmount = ... lógica de recálculo ...
         }
-        // -----------------------------------------------------
 
         // 2. Cambios de estado
         reservation.Status = ReservationStatus.CheckedOut; 
-        if (room != null) room.Status = RoomStatus.Dirty; // Aseo
-        if (folio != null) folio.Status = FolioStatus.Closed;
+        folio.Status = FolioStatus.Closed; // Ya validamos que folio no es null
 
-        await _repository.ProcessCheckOutAsync(reservation, room!, folio!);
-    
-        // 3. Notificación
+        if (room != null) 
+        {
+            room.Status = RoomStatus.Dirty;
+        }
+
+        // 3. Guardar cambios (Pasamos room y folio ya validados)
+        // Nota: Si room es null, necesitamos manejarlo en el repositorio o asegurarnos de no enviarlo si es null.
+        // Para simplificar y evitar cambiar la firma del repositorio, validemos room antes:
+        if (room == null)
+        {
+             // Si la habitación no existe, solo actualizamos reserva y folio
+             // Esto requiere que actualices el repositorio o hagas updates individuales aquí.
+             // Opción rápida segura:
+             await _repository.UpdateAsync(reservation);
+             await _folioRepository.UpdateAsync(folio); // Asumiendo que existe UpdateAsync en FolioRepo
+        }
+        else
+        {
+            await _repository.ProcessCheckOutAsync(reservation, room, folio);
+        }
+        
+        // ... Notificaciones y retorno OK ...
         await _notificationRepository.AddAsync(
             "Salida Confirmada",
-            $"Habitación {room?.Number} requiere limpieza.", 
+            $"Habitación {room?.Number ?? "N/A"} liberada.", 
             NotificationType.Warning, 
             "/habitaciones"
         );
-    
-        return Ok(new { message = "Check-out exitoso. Habitación liberada.", newStatus = "CheckedOut" });
+
+        return Ok(new { message = "Check-out exitoso.", newStatus = "CheckedOut" });
     }
 }

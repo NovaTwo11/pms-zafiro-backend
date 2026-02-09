@@ -56,13 +56,16 @@ public class ReservationRepository : IReservationRepository
     }
 
     // ✅ Implementación Faltante 3: Transacción de Check-Out
-    public async Task ProcessCheckOutAsync(Reservation reservation, Room room, Folio folio)
+    public async Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio)
     {
-        // Al usar el mismo contexto, SaveChanges aplica todo en una transacción implícita
         _context.Reservations.Update(reservation);
-        _context.Rooms.Update(room);
         _context.Folios.Update(folio);
-        
+    
+        if (room != null) 
+        {
+            _context.Rooms.Update(room);
+        }
+    
         await _context.SaveChangesAsync();
     }
     

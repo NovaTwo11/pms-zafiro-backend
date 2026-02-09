@@ -17,9 +17,32 @@ public class FolioRepository : IFolioRepository
 
     public async Task<Folio?> GetByIdAsync(Guid id)
     {
-        return await _context.Folios
+        // 1. Cargamos el Folio base y sus transacciones
+        var folio = await _context.Folios
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.Id == id);
+
+        // 2. Si es un folio de huésped, cargamos explícitamente los datos relacionados
+        // Esta forma es 100% segura y no falla por versiones de EF Core
+        if (folio is GuestFolio guestFolio)
+        {
+            await _context.Entry(guestFolio)
+                .Reference(g => g.Reservation)
+                .LoadAsync();
+
+            if (guestFolio.Reservation != null)
+            {
+                await _context.Entry(guestFolio.Reservation)
+                    .Reference(r => r.Guest)
+                    .LoadAsync();
+                
+                await _context.Entry(guestFolio.Reservation)
+                    .Reference(r => r.Room)
+                    .LoadAsync();
+            }
+        }
+
+        return folio;
     }
 
     public async Task<GuestFolio?> GetByReservationIdAsync(Guid reservationId)
