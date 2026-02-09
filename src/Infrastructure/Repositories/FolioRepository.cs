@@ -17,13 +17,12 @@ public class FolioRepository : IFolioRepository
 
     public async Task<Folio?> GetByIdAsync(Guid id)
     {
-        // 1. Cargamos el Folio base y sus transacciones
+        // Carga base polimórfica (trae GuestFolio o ExternalFolio según el discriminador)
         var folio = await _context.Folios
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.Id == id);
 
-        // 2. Si es un folio de huésped, cargamos explícitamente los datos relacionados
-        // Esta forma es 100% segura y no falla por versiones de EF Core
+        // Carga explicita de relaciones solo si es GuestFolio
         if (folio is GuestFolio guestFolio)
         {
             await _context.Entry(guestFolio)
@@ -32,13 +31,8 @@ public class FolioRepository : IFolioRepository
 
             if (guestFolio.Reservation != null)
             {
-                await _context.Entry(guestFolio.Reservation)
-                    .Reference(r => r.Guest)
-                    .LoadAsync();
-                
-                await _context.Entry(guestFolio.Reservation)
-                    .Reference(r => r.Room)
-                    .LoadAsync();
+                await _context.Entry(guestFolio.Reservation).Reference(r => r.Guest).LoadAsync();
+                await _context.Entry(guestFolio.Reservation).Reference(r => r.Room).LoadAsync();
             }
         }
 
@@ -48,13 +42,12 @@ public class FolioRepository : IFolioRepository
     public async Task<GuestFolio?> GetByReservationIdAsync(Guid reservationId)
     {
         return await _context.Folios
-            .OfType<GuestFolio>()
+            .OfType<GuestFolio>() // Filtra solo GuestFolios
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation) // Importante para validaciones
+            .Include(f => f.Reservation)
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
     }
 
-    // Implementación de GetAllAsync para el filtro de externos
     public async Task<IEnumerable<Folio>> GetAllAsync()
     {
         return await _context.Folios
@@ -62,7 +55,6 @@ public class FolioRepository : IFolioRepository
             .ToListAsync();
     }
 
-    // Implementación de AddAsync (antes CreateAsync)
     public async Task AddAsync(Folio folio)
     {
         await _context.Folios.AddAsync(folio);
@@ -85,10 +77,8 @@ public class FolioRepository : IFolioRepository
     {
         return await _context.Folios
             .OfType<GuestFolio>()
-            .Include(f => f.Reservation)
-                .ThenInclude(r => r.Guest)
-            .Include(f => f.Reservation)
-                .ThenInclude(r => r.Room)
+            .Include(f => f.Reservation).ThenInclude(r => r.Guest)
+            .Include(f => f.Reservation).ThenInclude(r => r.Room)
             .Include(f => f.Transactions)
             .Where(f => f.Status == FolioStatus.Open)
             .ToListAsync();

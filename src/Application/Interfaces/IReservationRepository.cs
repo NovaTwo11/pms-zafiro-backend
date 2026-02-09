@@ -6,9 +6,13 @@ public interface IReservationRepository
 {
     Task<IEnumerable<Reservation>> GetAllAsync();
     Task<Reservation?> GetByIdAsync(Guid id);
+    Task<Reservation?> GetByCodeAsync(string code);
+    
     Task<Reservation> CreateAsync(Reservation reservation);
     Task UpdateAsync(Reservation reservation);
-    Task<Reservation?> GetByCodeAsync(string code);
-    Task ProcessCheckOutAsync(Reservation reservation, Room room, Folio folio);
+    
+    // Método CRÍTICO para el arreglo de Check-out
+    Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio);
+    
     Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId);
 }

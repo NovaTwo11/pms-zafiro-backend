@@ -44,12 +44,11 @@ public class ReservationsController : ControllerBase
             RoomId = r.RoomId,
             RoomNumber = r.Room != null ? r.Room.Number : "?",
             
-            // Lógica DateOnly del DTO
             StartDate = DateOnly.FromDateTime(r.CheckIn), 
             EndDate = DateOnly.FromDateTime(r.CheckOut),   
             
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
-            HasFolio = true // Opcional: podrías verificar si r.Folios.Any() si lo incluyes
+            HasFolio = true
         });
         return Ok(dtos);
     }
@@ -86,18 +85,13 @@ public class ReservationsController : ControllerBase
         {
             GuestId = dto.MainGuestId,
             RoomId = dto.RoomId,
-            
-            // Conversión DateOnly -> DateTime
             CheckIn = dto.StartDate.ToDateTime(TimeOnly.MinValue), 
             CheckOut = dto.EndDate.ToDateTime(TimeOnly.MinValue),    
-            
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
-            // Generar código si no viene en el DTO o repositorio
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper() 
         };
 
-        // USAMOS CreateAsync (nombre en IReservationRepository)
         await _repository.CreateAsync(reservation);
         
         return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
@@ -126,7 +120,6 @@ public class ReservationsController : ControllerBase
                 Nationality = "Colombia",
                 CreatedAt = DateTimeOffset.UtcNow
             };
-            // USAMOS AddAsync (Asumiendo que IGuestRepository tiene AddAsync, si falla cámbialo a CreateAsync)
             await _guestRepository.AddAsync(guest);
         }
 
@@ -141,7 +134,6 @@ public class ReservationsController : ControllerBase
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
         };
 
-        // USAMOS CreateAsync (IReservationRepository)
         await _repository.CreateAsync(reservation);
 
         await _notificationRepository.AddAsync(
@@ -163,9 +155,11 @@ public class ReservationsController : ControllerBase
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest("El estado de la reserva no permite Check-in.");
 
+        // 1. Actualizar Reserva
         reservation.Status = ReservationStatus.CheckedIn;
         await _repository.UpdateAsync(reservation);
 
+        // 2. Actualizar Habitación (si existe)
         var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
         if (room != null)
         {
@@ -173,6 +167,7 @@ public class ReservationsController : ControllerBase
             await _roomRepository.UpdateAsync(room);
         }
 
+        // 3. Crear Folio si no existe
         var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
         if (existingFolio == null)
         {
@@ -182,11 +177,7 @@ public class ReservationsController : ControllerBase
                 Status = FolioStatus.Open,
                 CreatedAt = DateTimeOffset.UtcNow
             };
-            
-            // --- CORRECCIÓN CRÍTICA ---
-            // Usamos AddAsync porque IFolioRepository lo definimos como AddAsync en el paso anterior.
             await _folioRepository.AddAsync(folio);
-            // --------------------------
         }
 
         await _notificationRepository.AddAsync(
@@ -211,14 +202,13 @@ public class ReservationsController : ControllerBase
         var folio = await _folioRepository.GetByReservationIdAsync(id);
         var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
 
-        // --- VALIDACIÓN DE INTEGRIDAD DE DATOS ---
+        // --- VALIDACIONES DE INTEGRIDAD ---
         if (folio == null) 
         {
-            // Si no hay folio, es un error de datos crítico, pero no debería tumbar el servidor.
             return BadRequest("Error crítico: No se encontró un folio asociado a esta reserva.");
         }
 
-        // 1. Validar Deuda
+        // 1. Validar Deuda (Margen de 100 pesos por temas de redondeo si aplica)
         if (folio.Balance > 100) 
         {
             return BadRequest(new { 
@@ -227,38 +217,35 @@ public class ReservationsController : ControllerBase
             });
         }
 
-        // Lógica de salida anticipada...
+        // 2. Lógica de salida anticipada (Actualizar fecha si sale antes)
         if (reservation.CheckOut.Date > DateTime.UtcNow.Date)
         {
             reservation.CheckOut = DateTime.UtcNow;
         }
 
-        // 2. Cambios de estado
+        // 3. Cambios de estado en memoria
         reservation.Status = ReservationStatus.CheckedOut; 
-        folio.Status = FolioStatus.Closed; // Ya validamos que folio no es null
+        folio.Status = FolioStatus.Closed; 
 
         if (room != null) 
         {
             room.Status = RoomStatus.Dirty;
         }
 
-        // 3. Guardar cambios (Pasamos room y folio ya validados)
-        // Nota: Si room es null, necesitamos manejarlo en el repositorio o asegurarnos de no enviarlo si es null.
-        // Para simplificar y evitar cambiar la firma del repositorio, validemos room antes:
+        // 4. Persistencia segura
+        // Si la habitación no existe o es nula, actualizamos individualmente para no romper la transacción
         if (room == null)
         {
-             // Si la habitación no existe, solo actualizamos reserva y folio
-             // Esto requiere que actualices el repositorio o hagas updates individuales aquí.
-             // Opción rápida segura:
              await _repository.UpdateAsync(reservation);
-             await _folioRepository.UpdateAsync(folio); // Asumiendo que existe UpdateAsync en FolioRepo
+             await _folioRepository.UpdateAsync(folio); 
         }
         else
         {
+            // Transacción atómica si todo está correcto
             await _repository.ProcessCheckOutAsync(reservation, room, folio);
         }
         
-        // ... Notificaciones y retorno OK ...
+        // 5. Notificación
         await _notificationRepository.AddAsync(
             "Salida Confirmada",
             $"Habitación {room?.Number ?? "N/A"} liberada.", 

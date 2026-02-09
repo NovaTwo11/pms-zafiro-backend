@@ -32,7 +32,6 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.Id == id);
     }
 
-    // ✅ Implementación Faltante 1
     public async Task<Reservation> CreateAsync(Reservation reservation)
     {
         await _context.Reservations.AddAsync(reservation);
@@ -46,7 +45,6 @@ public class ReservationRepository : IReservationRepository
         await _context.SaveChangesAsync();
     }
 
-    // ✅ Implementación Faltante 2
     public async Task<Reservation?> GetByCodeAsync(string code)
     {
         return await _context.Reservations
@@ -55,7 +53,8 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.ConfirmationCode == code);
     }
 
-    // ✅ Implementación Faltante 3: Transacción de Check-Out
+    // Este método asegura que todo se guarde a la vez.
+    // Maneja el caso de room nulo para evitar crashes.
     public async Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio)
     {
         _context.Reservations.Update(reservation);
@@ -66,10 +65,10 @@ public class ReservationRepository : IReservationRepository
             _context.Rooms.Update(room);
         }
     
+        // SaveChangesAsync aplica todo en una sola transacción de DB por defecto
         await _context.SaveChangesAsync();
     }
     
-    // Método auxiliar útil para validaciones
     public async Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId)
     {
          return await _context.Reservations
