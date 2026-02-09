@@ -17,7 +17,7 @@ public class FoliosController : ControllerBase
         _repository = repository;
     }
 
-    // 1. Endpoint Existente: Huéspedes
+    // 1. Listado de Huéspedes Activos
     [HttpGet("active-guests")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
@@ -28,7 +28,7 @@ public class FoliosController : ControllerBase
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
             
             var nights = 0;
-            if (f.Reservation != null) // Validación de seguridad
+            if (f.Reservation != null)
             {
                 nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
                 if (nights < 1) nights = 1;
@@ -51,14 +51,10 @@ public class FoliosController : ControllerBase
         return Ok(result);
     }
 
-    // 2. NUEVO ENDPOINT: Externos / Pasadías
-    // Soluciona el error 400 al evitar que caiga en el endpoint {id}
+    // 2. Listado de Externos Activos
     [HttpGet("active-externals")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveExternals()
     {
-        // Nota: Asegúrate de tener este método en tu IFolioRepository o usa GetAll y filtra aquí
-        // Si no lo tienes en el repo, avísame para darte el código del repositorio.
-        // Asumiremos por ahora que puedes filtrar o que agregarás el método.
         var allFolios = await _repository.GetAllAsync(); 
         var externals = allFolios.OfType<ExternalFolio>().Where(f => f.Status == FolioStatus.Open).ToList();
 
@@ -81,6 +77,7 @@ public class FoliosController : ControllerBase
         return Ok(result);
     }
 
+    // 3. Obtener Folio por ID (Detalle Completo)
     [HttpGet("{id}")]
     public async Task<ActionResult<FolioDto>> GetById(Guid id)
     {
@@ -90,7 +87,7 @@ public class FoliosController : ControllerBase
         return Ok(MapToDto(folio));
     }
 
-    // 3. NUEVO ENDPOINT: Crear Folio Externo
+    // 4. Crear Folio Externo
     [HttpPost("external")]
     public async Task<IActionResult> CreateExternalFolio([FromBody] CreateExternalFolioDto dto)
     {
@@ -102,11 +99,12 @@ public class FoliosController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
-        await _repository.AddAsync(folio); // Asegúrate que tu repositorio tenga AddAsync genérico o para Folio
+        await _repository.AddAsync(folio);
 
         return CreatedAtAction(nameof(GetById), new { id = folio.Id }, new { id = folio.Id, message = "Folio externo creado" });
     }
 
+    // 5. Agregar Transacción (Cargos o Pagos)
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
@@ -124,7 +122,7 @@ public class FoliosController : ControllerBase
             PaymentMethod = dto.PaymentMethod,
             CashierShiftId = dto.CashierShiftId,
             CreatedAt = DateTimeOffset.UtcNow,
-            CreatedByUserId = "POS-USER" 
+            CreatedByUserId = "POS-USER" // TODO: Obtener del token JWT
         };
 
         await _repository.AddTransactionAsync(transaction);
@@ -132,6 +130,7 @@ public class FoliosController : ControllerBase
         return Ok(new { message = "Transacción agregada", transactionId = transaction.Id });
     }
 
+    // --- Mapeo Centralizado ---
     private FolioDto MapToDto(Folio folio)
     {
         var charges = folio.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
@@ -140,10 +139,13 @@ public class FoliosController : ControllerBase
         var dto = new FolioDto
         {
             Id = folio.Id,
+            // Solución al error de fecha: Usar .DateTime
+            CreatedAt = folio.CreatedAt.DateTime, 
             Status = folio.Status.ToString(),
             Balance = charges - payments,
             TotalCharges = charges,
             TotalPayments = payments,
+            
             Transactions = folio.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioTransactionDto
             {
                 Id = t.Id,
@@ -154,19 +156,32 @@ public class FoliosController : ControllerBase
                 UnitPrice = t.UnitPrice,
                 Quantity = t.Quantity,
                 User = t.CreatedByUserId,
-                PaymentMethod = t.PaymentMethod // Agregamos esto si lo tienes en el DTO para visualización
+                PaymentMethod = t.PaymentMethod
             }).ToList()
         };
 
-        // Mapeo condicional según el tipo
+        // Mapeo condicional
         if (folio is GuestFolio guestFolio)
         {
-            dto.ReservationId = guestFolio.ReservationId;
-            dto.GuestName = guestFolio.Reservation?.Guest?.FullName;
-            dto.RoomNumber = guestFolio.Reservation?.Room?.Number;
+            dto.FolioType = "guest"; // Minúsculas para React
+            
+            // Solución al error de ID nulo:
+            dto.ReservationId = guestFolio.ReservationId; 
+            
+            if (guestFolio.Reservation != null)
+            {
+                dto.GuestName = guestFolio.Reservation.Guest?.FullName ?? "Huésped";
+                dto.RoomNumber = guestFolio.Reservation.Room?.Number ?? "N/A";
+                dto.CheckIn = guestFolio.Reservation.CheckIn;
+                dto.CheckOut = guestFolio.Reservation.CheckOut;
+                
+                var nights = (guestFolio.Reservation.CheckOut - guestFolio.Reservation.CheckIn).Days;
+                dto.Nights = nights < 1 ? 1 : nights;
+            }
         }
         else if (folio is ExternalFolio externalFolio)
         {
+            dto.FolioType = "external";
             dto.Alias = externalFolio.Alias;
             dto.Description = externalFolio.Description;
         }
