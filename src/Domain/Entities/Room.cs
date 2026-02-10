@@ -6,7 +6,8 @@ public class Room
 {
     public Guid Id { get; set; }
     public string Number { get; set; } = string.Empty;
-    public string Category { get; set; } = "Standard"; // Podría ser Enum
+    public int Floor { get; set; }
+    public string Category { get; set; } = String.Empty;
     public decimal BasePrice { get; set; }
     public RoomStatus Status { get; set; }
     

@@ -25,6 +25,7 @@ public class RoomsController : ControllerBase
         {
             Id = r.Id,
             Number = r.Number,
+            Floor = r.Floor,
             Category = r.Category,
             BasePrice = r.BasePrice,
             Status = r.Status.ToString()
@@ -40,6 +41,7 @@ public class RoomsController : ControllerBase
         {
             Id = r.Id,
             Number = r.Number,
+            Floor = r.Floor,
             Category = r.Category,
             BasePrice = r.BasePrice,
             Status = r.Status.ToString()

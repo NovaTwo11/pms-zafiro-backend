@@ -84,20 +84,21 @@ public class SeedController : ControllerBase
         {
             string category;
             decimal price;
+            int floor = i <= 5 ? 1 : 2; // Primeras 5 al piso 1, siguientes al 2
+            string number = i <= 5 ? $"10{i}" : $"20{i-5}"; // Ej: 101, 102... 201, 202...
 
-            if (i <= 3) { category = "Doble"; price = 120000m; }
-            else if (i <= 6) { category = "Triple"; price = 180000m; }
-            else if (i <= 8) { category = "Familiar"; price = 250000m; }
-            else { category = "SuiteFamiliar"; price = 350000m; }
+            if (i % 3 == 0) { category = "SuiteFamiliar"; price = 300000m; }
+            else if (i % 2 == 0) { category = "Triple"; price = 200000m; }
+            else { category = "Doble"; price = 150000m; }
 
             roomsList.Add(new Room
             {
                 Id = Guid.NewGuid(),
-                Number = $"10{i-1}",
+                Number = number,
+                Floor = floor, // <--- Asignado
                 Category = category,
                 BasePrice = price,
-                Status = RoomStatus.Available, // Se actualizará abajo si hay reserva activa
-                Floor = 1
+                Status = RoomStatus.Available
             });
         }
         await _context.Rooms.AddRangeAsync(roomsList);
