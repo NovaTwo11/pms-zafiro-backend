@@ -15,8 +15,8 @@ public class ReservationDto
     public Guid RoomId { get; set; }
     public string RoomNumber { get; set; } = string.Empty;
     
-    public DateOnly StartDate { get; set; }
-    public DateOnly EndDate { get; set; }
+    public DateTime CheckIn { get; set; }
+    public DateTime CheckOut { get; set; }
     public int Nights { get; set; }
     
     // Para saber si ya tiene folio (casi siempre sí)

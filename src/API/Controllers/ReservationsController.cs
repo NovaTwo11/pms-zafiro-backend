@@ -43,8 +43,8 @@ public class ReservationsController : ControllerBase
             MainGuestName = r.Guest != null ? r.Guest.FullName : "Sin Nombre",
             RoomId = r.RoomId,
             RoomNumber = r.Room != null ? r.Room.Number : "?",
-            StartDate = DateOnly.FromDateTime(r.CheckIn),
-            EndDate = DateOnly.FromDateTime(r.CheckOut),
+            CheckIn = r.CheckIn,
+            CheckOut = r.CheckOut,
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         });
@@ -66,8 +66,8 @@ public class ReservationsController : ControllerBase
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             RoomId = r.RoomId,
             RoomNumber = r.Room?.Number ?? "?",
-            StartDate = DateOnly.FromDateTime(r.CheckIn),
-            EndDate = DateOnly.FromDateTime(r.CheckOut),
+            CheckIn = r.CheckIn,
+            CheckOut = r.CheckOut,
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         };
