@@ -43,10 +43,8 @@ public class ReservationsController : ControllerBase
             MainGuestName = r.Guest != null ? r.Guest.FullName : "Sin Nombre",
             RoomId = r.RoomId,
             RoomNumber = r.Room != null ? r.Room.Number : "?",
-            
-            StartDate = DateOnly.FromDateTime(r.CheckIn), 
-            EndDate = DateOnly.FromDateTime(r.CheckOut),   
-            
+            StartDate = DateOnly.FromDateTime(r.CheckIn),
+            EndDate = DateOnly.FromDateTime(r.CheckOut),
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         });
@@ -68,10 +66,8 @@ public class ReservationsController : ControllerBase
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             RoomId = r.RoomId,
             RoomNumber = r.Room?.Number ?? "?",
-            
             StartDate = DateOnly.FromDateTime(r.CheckIn),
             EndDate = DateOnly.FromDateTime(r.CheckOut),
-            
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
             HasFolio = true
         };
@@ -85,15 +81,15 @@ public class ReservationsController : ControllerBase
         {
             GuestId = dto.MainGuestId,
             RoomId = dto.RoomId,
-            CheckIn = dto.StartDate.ToDateTime(TimeOnly.MinValue), 
-            CheckOut = dto.EndDate.ToDateTime(TimeOnly.MinValue),    
+            CheckIn = dto.StartDate.ToDateTime(TimeOnly.MinValue),
+            CheckOut = dto.EndDate.ToDateTime(TimeOnly.MinValue),
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
-            ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper() 
+            ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
         };
 
         await _repository.CreateAsync(reservation);
-        
+
         return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
     }
 
@@ -101,7 +97,7 @@ public class ReservationsController : ControllerBase
     public async Task<ActionResult<ReservationDto>> CreateBooking(CreateBookingRequestDto dto)
     {
         Guest? guest = null;
-        
+
         if (!string.IsNullOrEmpty(dto.DocNumber))
         {
             guest = await _guestRepository.GetByDocumentAsync(dto.DocNumber);
@@ -137,8 +133,8 @@ public class ReservationsController : ControllerBase
         await _repository.CreateAsync(reservation);
 
         await _notificationRepository.AddAsync(
-            "Nueva Reserva Web", 
-            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}", 
+            "Nueva Reserva Web",
+            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}",
             NotificationType.Success,
             $"/reservas/{reservation.Id}"
         );
@@ -155,11 +151,9 @@ public class ReservationsController : ControllerBase
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest("El estado de la reserva no permite Check-in.");
 
-        // 1. Actualizar Reserva
         reservation.Status = ReservationStatus.CheckedIn;
         await _repository.UpdateAsync(reservation);
 
-        // 2. Actualizar Habitación (si existe)
         var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
         if (room != null)
         {
@@ -167,7 +161,6 @@ public class ReservationsController : ControllerBase
             await _roomRepository.UpdateAsync(room);
         }
 
-        // 3. Crear Folio si no existe
         var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
         if (existingFolio == null)
         {
@@ -181,9 +174,9 @@ public class ReservationsController : ControllerBase
         }
 
         await _notificationRepository.AddAsync(
-            "Check-in Realizado", 
-            $"Huésped {reservation.Guest?.FullName} ingresó a habitación {room?.Number}", 
-            NotificationType.Info, 
+            "Check-in Realizado",
+            $"Huésped {reservation.Guest?.FullName} ingresó a habitación {room?.Number}",
+            NotificationType.Info,
             $"/folios"
         );
 
@@ -193,66 +186,73 @@ public class ReservationsController : ControllerBase
     [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
+        Console.WriteLine($"[CheckOut] Procesando solicitud para ID: {id}");
+
+        // 1. Obtener Datos
         var reservation = await _repository.GetByIdAsync(id);
-        if (reservation == null) return NotFound("Reserva no encontrada");
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
 
         if (reservation.Status == ReservationStatus.CheckedOut)
-            return BadRequest("La reserva ya hizo Check-out.");
+            return BadRequest(new { message = "La reserva ya hizo Check-out." });
 
         var folio = await _folioRepository.GetByReservationIdAsync(id);
-        var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
-
-        // --- VALIDACIONES DE INTEGRIDAD ---
-        if (folio == null) 
+        
+        // 2. Validación de Integridad
+        if (folio == null)
         {
-            return BadRequest("Error crítico: No se encontró un folio asociado a esta reserva.");
+            Console.WriteLine($"[CheckOut] Error Crítico: No se encontró folio para reserva {id}");
+            return BadRequest(new { message = "Error crítico: No se encontró un folio asociado a esta reserva." });
         }
 
-        // 1. Validar Deuda (Margen de 100 pesos por temas de redondeo si aplica)
-        if (folio.Balance > 100) 
+        // 3. Validar Deuda (Uso Math.Abs para asegurar saldo cero exacto)
+        if (Math.Abs(folio.Balance) > 100)
         {
-            return BadRequest(new { 
-                error = "DeudaPendiente", 
-                message = $"No se puede realizar Check-out. El huésped debe {folio.Balance:C0}" 
+            return BadRequest(new
+            {
+                error = "DeudaPendiente",
+                message = $"No se puede realizar Check-out. El huésped debe {folio.Balance:C0}"
             });
         }
 
-        // 2. Lógica de salida anticipada (Actualizar fecha si sale antes)
+        // 4. Lógica de Fechas (Salida anticipada)
         if (reservation.CheckOut.Date > DateTime.UtcNow.Date)
         {
             reservation.CheckOut = DateTime.UtcNow;
         }
 
-        // 3. Cambios de estado en memoria
-        reservation.Status = ReservationStatus.CheckedOut; 
-        folio.Status = FolioStatus.Closed; 
+        // 5. Cambios de Estado
+        reservation.Status = ReservationStatus.CheckedOut;
+        folio.Status = FolioStatus.Closed;
 
-        if (room != null) 
+        var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
+        if (room != null)
         {
             room.Status = RoomStatus.Dirty;
         }
-
-        // 4. Persistencia segura
-        // Si la habitación no existe o es nula, actualizamos individualmente para no romper la transacción
-        if (room == null)
+        else 
         {
-             await _repository.UpdateAsync(reservation);
-             await _folioRepository.UpdateAsync(folio); 
+            Console.WriteLine("[CheckOut] Advertencia: La reserva no tiene habitación válida vinculada (null).");
         }
-        else
+
+        // 6. Transacción Atómica
+        try
         {
-            // Transacción atómica si todo está correcto
+            // El repositorio maneja la lógica segura incluso si room es null
             await _repository.ProcessCheckOutAsync(reservation, room, folio);
-        }
-        
-        // 5. Notificación
-        await _notificationRepository.AddAsync(
-            "Salida Confirmada",
-            $"Habitación {room?.Number ?? "N/A"} liberada.", 
-            NotificationType.Warning, 
-            "/habitaciones"
-        );
 
-        return Ok(new { message = "Check-out exitoso.", newStatus = "CheckedOut" });
+            await _notificationRepository.AddAsync(
+                "Salida Confirmada",
+                $"Habitación {room?.Number ?? "N/A"} liberada.",
+                NotificationType.Warning,
+                "/habitaciones"
+            );
+
+            return Ok(new { message = "Check-out exitoso.", newStatus = "CheckedOut" });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CheckOut] Excepción al guardar: {ex.Message}");
+            return StatusCode(500, new { message = "Error interno al procesar el check-out." });
+        }
     }
 }

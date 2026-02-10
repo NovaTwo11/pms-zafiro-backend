@@ -53,26 +53,46 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.ConfirmationCode == code);
     }
 
-    // Este método asegura que todo se guarde a la vez.
-    // Maneja el caso de room nulo para evitar crashes.
+    // --- LÓGICA DE CHECK-OUT TRANSACCIONAL ---
+    // Utiliza ExecutionStrategy para evitar errores de conexión intermitentes
+    // y maneja transacciones explícitas para asegurar integridad.
     public async Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio)
     {
-        _context.Reservations.Update(reservation);
-        _context.Folios.Update(folio);
-    
-        if (room != null) 
+        var strategy = _context.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
         {
-            _context.Rooms.Update(room);
-        }
-    
-        // SaveChangesAsync aplica todo en una sola transacción de DB por defecto
-        await _context.SaveChangesAsync();
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // 1. Actualizar Reserva
+                _context.Reservations.Update(reservation);
+                
+                // 2. Actualizar Folio
+                _context.Folios.Update(folio);
+
+                // 3. Actualizar Habitación (si existe)
+                if (room != null)
+                {
+                    _context.Rooms.Update(room);
+                }
+
+                // 4. Guardar y confirmar
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw; // Re-lanza la excepción para que el Controller la registre
+            }
+        });
     }
-    
+
     public async Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId)
     {
-         return await _context.Reservations
-            .Where(r => r.RoomId == roomId && 
+        return await _context.Reservations
+            .Where(r => r.RoomId == roomId &&
                        (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
             .ToListAsync();
     }
