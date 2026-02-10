@@ -12,7 +12,8 @@ public class PmsDbContext : DbContext
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Folio> Folios { get; set; }
     public DbSet<AppNotification> Notifications { get; set; }
-    public DbSet<CashierShift> CashierShifts { get; set; } // ✅ Nuevo DbSet
+    public DbSet<CashierShift> CashierShifts { get; set; }
+    public DbSet<Product> Products { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -35,6 +35,7 @@ builder.Services.AddScoped<IFolioRepository, FolioRepository>();
 builder.Services.AddScoped<ICashierRepository, CashierRepository>();
 builder.Services.AddScoped<CashierService>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
 
 // 5. Workers (Tareas en segundo plano)
 builder.Services.AddHostedService<PmsZafiro.API.Workers.HousekeepingWorker>();
