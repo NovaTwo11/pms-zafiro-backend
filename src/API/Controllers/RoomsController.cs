@@ -54,7 +54,9 @@ public class RoomsController : ControllerBase
     {
         var room = new Room
         {
+            Id = Guid.NewGuid(),
             Number = dto.Number,
+            Floor = dto.Floor,
             Category = dto.Category,
             BasePrice = dto.BasePrice,
             Status = dto.Status
