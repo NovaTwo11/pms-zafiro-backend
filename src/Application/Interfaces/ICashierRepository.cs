@@ -6,4 +6,6 @@ public interface ICashierRepository
     Task AddShiftAsync(CashierShift shift);
     Task UpdateShiftAsync(CashierShift shift);
     Task<CashierShift?> GetShiftByIdAsync(Guid id);
+
+    Task<List<CashierShift>>GetHistoryAsync();
 }

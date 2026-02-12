@@ -41,4 +41,11 @@ public class CashierController : ControllerBase
         if (report == null) return NotFound("No hay turno abierto para generar reporte.");
         return Ok(report);
     }
+    
+    [HttpGet("history")]
+    public async Task<ActionResult<IEnumerable<CashierShiftDto>>> GetHistory()
+    {
+        var history = await _service.GetHistoryAsync();
+        return Ok(history);
+    }
 }

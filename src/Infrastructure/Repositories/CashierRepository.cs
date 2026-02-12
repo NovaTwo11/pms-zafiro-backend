@@ -39,4 +39,12 @@ public class CashierRepository : ICashierRepository
     {
         return await _context.CashierShifts.FindAsync(id);
     }
+    
+    public async Task<List<CashierShift>> GetHistoryAsync()
+    {
+        return await _context.CashierShifts
+            .OrderByDescending(s => s.OpenedAt)
+            .Take(50) // Últimos 50 turnos
+            .ToListAsync();
+    }
 }

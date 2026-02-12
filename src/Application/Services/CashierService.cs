@@ -90,6 +90,17 @@ public class CashierService
         await _repository.UpdateShiftAsync(shift);
         return MapToDto(shift);
     }
+    
+    public async Task<CashierShift?> GetOpenShiftEntityAsync(string userId)
+    {
+        return await _repository.GetOpenShiftByUserIdAsync(userId);
+    }
+    
+    public async Task<IEnumerable<CashierShiftDto>> GetHistoryAsync()
+    {
+        var shifts = await _repository.GetHistoryAsync(); // Implementar en Repo
+        return shifts.Select(MapToDto);
+    }
 
     private static CashierShiftDto MapToDto(CashierShift s) => 
         new(s.Id, s.UserId, s.OpenedAt, s.ClosedAt, s.StartingAmount, s.SystemCalculatedAmount, s.ActualAmount, s.Status);

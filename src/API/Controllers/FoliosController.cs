@@ -99,24 +99,24 @@ public class FoliosController : ControllerBase
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
-        // 1. VALIDACIÓN DE CAJA
-        // "user1" es temporal. Cuando tengas Auth real, usa User.Claims...
+        // 1. OBTENER USUARIO ACTUAL (Hardcodeado temporalmente o por Token)
         string currentUserId = "user1"; 
-        
-        bool isShiftOpen = await _cashierService.IsShiftOpenAsync(currentUserId);
-        if (!isShiftOpen)
+
+        // 2. BUSCAR TURNO ABIERTO (CRÍTICO: Esto faltaba o fallaba)
+        var openShift = await _cashierService.GetOpenShiftEntityAsync(currentUserId); // Necesitamos exponer este método o usar el Repo directo
+    
+        if (openShift == null)
         {
             return BadRequest(new { 
                 error = "Caja Cerrada", 
-                message = "Debe abrir un turno de caja antes de realizar cobros o cargos." 
+                message = "No se pueden procesar pagos sin un turno de caja abierto." 
             });
         }
 
-        // 2. Validación de Folio
         var folio = await _repository.GetByIdAsync(id);
         if (folio == null) return NotFound("El folio no existe.");
 
-        // 3. Crear Transacción
+        // 3. VINCULACIÓN AUTOMÁTICA
         var transaction = new FolioTransaction
         {
             FolioId = id,
@@ -126,14 +126,17 @@ public class FoliosController : ControllerBase
             Quantity = dto.Quantity,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
             PaymentMethod = dto.PaymentMethod,
-            CashierShiftId = dto.CashierShiftId, // Opcional: podrías asignarlo automáticamente aquí consultando el ID del turno abierto
+        
+            // ¡ESTA ES LA LÍNEA CLAVE!
+            CashierShiftId = openShift.Id, 
+        
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedByUserId = currentUserId
         };
 
         await _repository.AddTransactionAsync(transaction);
 
-        return Ok(new { message = "Transacción agregada correctamente", transactionId = transaction.Id });
+        return Ok(new { message = "Transacción exitosa", transactionId = transaction.Id });
     }
 
     private FolioDto MapToDto(Folio folio)
