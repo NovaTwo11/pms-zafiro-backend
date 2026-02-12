@@ -43,9 +43,10 @@ public class CashierRepository : ICashierRepository
     public async Task<List<CashierShift>> GetHistoryAsync()
     {
         return await _context.CashierShifts
+            .AsNoTracking()
             .Include(s => s.Transactions)
             .OrderByDescending(s => s.OpenedAt)
-            .Take(50) // Últimos 50 turnos
+            .Take(30) // Últimos 30 turnos
             .ToListAsync();
     }
 }
