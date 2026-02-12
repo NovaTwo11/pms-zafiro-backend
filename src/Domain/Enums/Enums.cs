@@ -56,11 +56,13 @@ public enum ReservationStatus
 
 public enum PaymentMethod
 {
-    Cash = 0,
-    CreditCard = 1,
-    DebitCard = 2,
-    Transfer = 3,
-    Other = 4
+    // Definimos explícitamente los índices para evitar errores de desplazamiento
+    None = 0,        // Para Cargos (Charges) que no implican pago inmediato
+    Cash = 1,        // Efectivo
+    CreditCard = 2,  // Tarjeta Crédito
+    DebitCard = 3,   // Tarjeta Débito
+    Transfer = 4,    // Transferencia
+    Other = 5        // Otros
 }
 
 public enum FolioStatus

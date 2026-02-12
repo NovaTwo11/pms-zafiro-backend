@@ -47,7 +47,7 @@ public class FolioTransaction
     public int Quantity { get; set; } = 1;
     public decimal UnitPrice { get; set; }
     
-    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Other;
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.None;
     
     public Guid? CashierShiftId { get; set; }
     public CashierShift? CashierShift { get; set; }

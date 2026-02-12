@@ -18,7 +18,7 @@ public class CreateTransactionDto
     public decimal UnitPrice { get; set; } // Opcional si el front lo calcula, o Amount se ignora
     
     // Propiedades para POS
-    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Other;
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.None;
     public Guid? CashierShiftId { get; set; }
     
     // Category es útil para reportes estadísticos, aunque no esté en la entidad Transaction, 

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PmsZafiro.Application.DTOs.Folios;
 using PmsZafiro.Application.Interfaces;
-using PmsZafiro.Application.Services; // Importar Servicio
+using PmsZafiro.Application.Services;
 using PmsZafiro.Domain.Entities;
 using PmsZafiro.Domain.Enums;
 
@@ -12,16 +12,14 @@ namespace PmsZafiro.API.Controllers;
 public class FoliosController : ControllerBase
 {
     private readonly IFolioRepository _repository;
-    private readonly CashierService _cashierService; // Inyección
+    private readonly CashierService _cashierService;
 
-    // Constructor actualizado
     public FoliosController(IFolioRepository repository, CashierService cashierService)
     {
         _repository = repository;
         _cashierService = cashierService;
     }
 
-    // ... (Métodos GET activos se mantienen igual) ...
     [HttpGet("active-guests")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
@@ -30,11 +28,13 @@ public class FoliosController : ControllerBase
             var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
             var nights = 0;
+            
             if (f.Reservation != null)
             {
                 nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
                 if (nights < 1) nights = 1;
             }
+            
             return new 
             {
                 Id = f.Id,
@@ -56,6 +56,7 @@ public class FoliosController : ControllerBase
     {
         var allFolios = await _repository.GetAllAsync(); 
         var externals = allFolios.OfType<ExternalFolio>().Where(f => f.Status == FolioStatus.Open).ToList();
+        
         var result = externals.Select(f => {
             var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
@@ -89,57 +90,64 @@ public class FoliosController : ControllerBase
             Alias = dto.Alias,
             Description = dto.Description,
             Status = FolioStatus.Open,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow
         };
         await _repository.AddAsync(folio);
         return CreatedAtAction(nameof(GetById), new { id = folio.Id }, new { id = folio.Id, message = "Folio externo creado" });
     }
 
-    // --- AQUÍ ESTÁ EL CAMBIO IMPORTANTE ---
+    // --- MÉTODO CLAVE PARA REPORTES ---
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
-        // 1. OBTENER USUARIO ACTUAL (Hardcodeado temporalmente o por Token)
+        // 1. Obtener usuario actual
         string currentUserId = "user1"; 
 
-        // 2. BUSCAR TURNO ABIERTO (CRÍTICO: Esto faltaba o fallaba)
-        var openShift = await _cashierService.GetOpenShiftEntityAsync(currentUserId); // Necesitamos exponer este método o usar el Repo directo
+        // 2. Buscar turno abierto (CRÍTICO)
+        // Cualquier movimiento financiero debe quedar auditado en el turno actual.
+        var openShift = await _cashierService.GetOpenShiftEntityAsync(currentUserId);
     
         if (openShift == null)
         {
             return BadRequest(new { 
                 error = "Caja Cerrada", 
-                message = "No se pueden procesar pagos sin un turno de caja abierto." 
+                message = "No hay un turno de caja abierto. Por favor abra la caja antes de registrar movimientos." 
             });
         }
 
         var folio = await _repository.GetByIdAsync(id);
         if (folio == null) return NotFound("El folio no existe.");
 
-        // 3. VINCULACIÓN AUTOMÁTICA
+        // 3. Crear la transacción vinculada al turno
         var transaction = new FolioTransaction
         {
+            Id = Guid.NewGuid(),
             FolioId = id,
+            
             Amount = dto.Amount,
             Description = dto.Description,
             Type = dto.Type, 
-            Quantity = dto.Quantity,
+            Quantity = dto.Quantity > 0 ? dto.Quantity : 1,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
-            PaymentMethod = dto.PaymentMethod,
+            
+            // Si es un Cargo (consumo), el método de pago es None (0).
+            // Si es un Pago (abono), respetamos lo que viene del front (1, 2, 4...).
+            PaymentMethod = dto.Type == TransactionType.Charge ? PaymentMethod.None : dto.PaymentMethod,
         
-            // ¡ESTA ES LA LÍNEA CLAVE!
+            // ¡ESTO ES LO QUE HACE QUE EL REPORTE FUNCIONE!
             CashierShiftId = openShift.Id, 
         
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedByUserId = currentUserId
         };
 
+        // Guardamos usando el método del repositorio que maneja la transacción
         await _repository.AddTransactionAsync(transaction);
 
-        return Ok(new { message = "Transacción exitosa", transactionId = transaction.Id });
+        return Ok(new { message = "Transacción registrada correctamente", transactionId = transaction.Id });
     }
 
-    private FolioDto MapToDto(Folio folio)
+    private static FolioDto MapToDto(Folio folio)
     {
         var charges = folio.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
         var payments = folio.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
@@ -163,7 +171,7 @@ public class FoliosController : ControllerBase
                 UnitPrice = t.UnitPrice,
                 Quantity = t.Quantity,
                 User = t.CreatedByUserId,
-                PaymentMethod = t.PaymentMethod
+                PaymentMethod = t.PaymentMethod // Esto devolverá el enum como string o int según configuración JSON
             }).ToList()
         };
 
@@ -177,6 +185,7 @@ public class FoliosController : ControllerBase
                 dto.RoomNumber = guestFolio.Reservation.Room?.Number ?? "N/A";
                 dto.CheckIn = guestFolio.Reservation.CheckIn;
                 dto.CheckOut = guestFolio.Reservation.CheckOut;
+                
                 var nights = (guestFolio.Reservation.CheckOut - guestFolio.Reservation.CheckIn).Days;
                 dto.Nights = nights < 1 ? 1 : nights;
             }

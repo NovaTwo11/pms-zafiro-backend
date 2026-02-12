@@ -91,33 +91,36 @@ public class CashierService
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
         if (shift == null) return null;
 
-        // Filtrar transacciones
         var paymentsAndIncomes = shift.Transactions
             .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
             .ToList();
-            
+        
         var expenses = shift.Transactions
             .Where(t => t.Type == TransactionType.Expense)
             .ToList();
-            
+        
         var charges = shift.Transactions
             .Where(t => t.Type == TransactionType.Charge)
             .ToList();
 
-        // Totales
         var totalIncome = paymentsAndIncomes.Sum(t => t.Amount);
         var totalExpenses = expenses.Sum(t => t.Amount);
-        
-        // Efectivo Neto = (Pagos en Efectivo + Ingresos Manuales) - Gastos
-        // Nota: Asumimos que los gastos siempre salen del efectivo.
+    
+        // CORRECCIÓN SEGÚN NUEVOS ENUMS
+        // Cash = 1
         var cashIn = paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.Cash).Sum(t => t.Amount);
-        var netCash = cashIn - totalExpenses;
+    
+        // Cards = 2 y 3
+        var cardsIn = paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.CreditCard || t.PaymentMethod == PaymentMethod.DebitCard).Sum(t => t.Amount);
+    
+        // Transfers = 4
+        var transfersIn = paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.Transfer).Sum(t => t.Amount);
 
         return new CashierReportDto(
             TotalIncome: totalIncome,
-            TotalCash: netCash,
-            TotalCards: paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.CreditCard || t.PaymentMethod == PaymentMethod.DebitCard).Sum(t => t.Amount),
-            TotalTransfers: paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.Transfer).Sum(t => t.Amount),
+            TotalCash: cashIn - totalExpenses, // Asumimos que los gastos salen del efectivo
+            TotalCards: cardsIn,
+            TotalTransfers: transfersIn,
             TotalRoomCharges: charges.Sum(t => t.Amount),
             TotalExpenses: totalExpenses,
             TotalTransactions: shift.Transactions.Count
