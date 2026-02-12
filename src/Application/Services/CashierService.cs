@@ -14,7 +14,6 @@ public class CashierService
         _repository = repository;
     }
 
-    // Método ligero para validaciones rápidas desde otros controladores
     public async Task<bool> IsShiftOpenAsync(string userId)
     {
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
@@ -29,7 +28,6 @@ public class CashierService
 
     public async Task<CashierShiftDto> OpenShiftAsync(string userId, decimal startingAmount)
     {
-        // Regla: No abrir si ya existe uno
         var existing = await _repository.GetOpenShiftByUserIdAsync(userId);
         if (existing != null) 
             throw new InvalidOperationException("Ya existe un turno de caja abierto para este usuario.");
@@ -41,7 +39,7 @@ public class CashierService
             OpenedAt = DateTimeOffset.UtcNow,
             StartingAmount = startingAmount,
             Status = CashierShiftStatus.Open,
-            SystemCalculatedAmount = 0, // Se calcula al cerrar
+            SystemCalculatedAmount = 0,
             ActualAmount = 0
         };
 
@@ -49,20 +47,79 @@ public class CashierService
         return MapToDto(shift);
     }
 
+    // --- NUEVO MÉTODO PARA REGISTRAR GASTOS/INGRESOS ---
+    public async Task<bool> RegisterMovementAsync(string userId, CreateCashierMovementDto dto)
+    {
+        var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
+        if (shift == null) throw new InvalidOperationException("No hay turno abierto para registrar movimientos.");
+
+        // Mapeamos el string del frontend al Enum del backend
+        var type = dto.Type.ToLower() == "egreso" ? TransactionType.Expense : TransactionType.Income;
+
+        var transaction = new FolioTransaction
+        {
+            Id = Guid.NewGuid(),
+            CashierShiftId = shift.Id,
+        
+            // Asignaciones corregidas:
+            Amount = dto.Amount,
+            Quantity = 1,
+            UnitPrice = dto.Amount,
+            CreatedAt = DateTimeOffset.UtcNow,       // Antes decía 'Date'
+            CreatedByUserId = userId,                // Antes decía 'UserId'
+        
+            Description = dto.Description,
+            Type = type,
+            PaymentMethod = PaymentMethod.Cash,      // Efectivo por defecto para Caja Menor
+        
+            FolioId = null                           // Ahora permitido gracias al cambio en la entidad
+        };
+
+        // Nota: Como FolioId es null, asegúrate de no usar 'shift.Transactions.Add(transaction)'
+        // si eso depende de la navegación inversa de EF Core que a veces requiere la FK.
+        // Lo más seguro es agregarlo explícitamente al contexto si tienes acceso, 
+        // pero si usas el repositorio y el grafo está conectado, esto debería funcionar:
+        shift.Transactions.Add(transaction);
+    
+        await _repository.UpdateShiftAsync(shift);
+
+        return true;
+    }
+
     public async Task<CashierReportDto?> GetCurrentShiftReportAsync(string userId)
     {
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
         if (shift == null) return null;
 
-        var payments = shift.Transactions.Where(t => t.Type == TransactionType.Payment).ToList();
-        var charges = shift.Transactions.Where(t => t.Type == TransactionType.Charge).ToList();
+        // Filtrar transacciones
+        var paymentsAndIncomes = shift.Transactions
+            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+            .ToList();
+            
+        var expenses = shift.Transactions
+            .Where(t => t.Type == TransactionType.Expense)
+            .ToList();
+            
+        var charges = shift.Transactions
+            .Where(t => t.Type == TransactionType.Charge)
+            .ToList();
+
+        // Totales
+        var totalIncome = paymentsAndIncomes.Sum(t => t.Amount);
+        var totalExpenses = expenses.Sum(t => t.Amount);
+        
+        // Efectivo Neto = (Pagos en Efectivo + Ingresos Manuales) - Gastos
+        // Nota: Asumimos que los gastos siempre salen del efectivo.
+        var cashIn = paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.Cash).Sum(t => t.Amount);
+        var netCash = cashIn - totalExpenses;
 
         return new CashierReportDto(
-            TotalIncome: payments.Sum(t => t.Amount),
-            TotalCash: payments.Where(t => t.PaymentMethod == PaymentMethod.Cash).Sum(t => t.Amount),
-            TotalCards: payments.Where(t => t.PaymentMethod == PaymentMethod.CreditCard || t.PaymentMethod == PaymentMethod.DebitCard).Sum(t => t.Amount),
-            TotalTransfers: payments.Where(t => t.PaymentMethod == PaymentMethod.Transfer).Sum(t => t.Amount),
+            TotalIncome: totalIncome,
+            TotalCash: netCash,
+            TotalCards: paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.CreditCard || t.PaymentMethod == PaymentMethod.DebitCard).Sum(t => t.Amount),
+            TotalTransfers: paymentsAndIncomes.Where(t => t.PaymentMethod == PaymentMethod.Transfer).Sum(t => t.Amount),
             TotalRoomCharges: charges.Sum(t => t.Amount),
+            TotalExpenses: totalExpenses,
             TotalTransactions: shift.Transactions.Count
         );
     }
@@ -72,18 +129,12 @@ public class CashierService
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
         if (shift == null) throw new InvalidOperationException("No hay un turno abierto para cerrar.");
         
-        // 1. Calcular cuánto dinero debería haber según el sistema
-        var totalPayments = shift.Transactions
-            .Where(t => t.Type == TransactionType.Payment)
-            .Sum(t => t.Amount);
-
-        // La base inicial + Lo recaudado en pagos
-        shift.SystemCalculatedAmount = shift.StartingAmount + totalPayments;
+        // Calcular el esperado final usando la lógica de MapToDto (reutilización de lógica)
+        // Base + (Pagos + Ingresos) - Gastos
+        var calculatedDto = MapToDto(shift);
         
-        // 2. Registrar lo que el humano contó
+        shift.SystemCalculatedAmount = calculatedDto.SystemCalculatedAmount;
         shift.ActualAmount = actualAmount;
-        
-        // 3. Cerrar
         shift.ClosedAt = DateTimeOffset.UtcNow;
         shift.Status = CashierShiftStatus.Closed;
         
@@ -98,7 +149,7 @@ public class CashierService
     
     public async Task<IEnumerable<CashierShiftDto>> GetHistoryAsync()
     {
-        var shifts = await _repository.GetHistoryAsync(); // Implementar en Repo
+        var shifts = await _repository.GetHistoryAsync(); 
         return shifts.Select(MapToDto);
     }
 
@@ -106,16 +157,19 @@ public class CashierService
     {
         decimal systemAmount = s.SystemCalculatedAmount;
 
-        // LÓGICA DE CORRECCIÓN:
-        // Si el turno está ABIERTO, el SystemCalculatedAmount en BD suele ser 0 o desactualizado.
-        // Lo recalculamos en tiempo real sumando la base + pagos.
+        // LÓGICA DE CORRECCIÓN EN TIEMPO REAL:
         if (s.Status == CashierShiftStatus.Open && s.Transactions != null)
         {
-            var totalPayments = s.Transactions
-                .Where(t => t.Type == TransactionType.Payment)
+            var totalIncome = s.Transactions
+                .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+                .Sum(t => t.Amount);
+            
+            var totalExpenses = s.Transactions
+                .Where(t => t.Type == TransactionType.Expense)
                 .Sum(t => t.Amount);
 
-            systemAmount = s.StartingAmount + totalPayments;
+            // La caja debe tener: Base + Entradas - Salidas
+            systemAmount = (s.StartingAmount + totalIncome) - totalExpenses;
         }
 
         return new CashierShiftDto(
@@ -124,7 +178,7 @@ public class CashierService
             s.OpenedAt,
             s.ClosedAt,
             s.StartingAmount,
-            systemAmount, // <--- Usamos el valor calculado dinámicamente
+            systemAmount, 
             s.ActualAmount,
             s.Status
         );

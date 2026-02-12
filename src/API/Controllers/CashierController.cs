@@ -14,7 +14,7 @@ public class CashierController : ControllerBase
     [HttpGet("status")]
     public async Task<ActionResult<CashierShiftDto>> GetStatus()
     {
-        var status = await _service.GetStatusAsync("user1");
+        var status = await _service.GetStatusAsync("user1"); // Hardcoded temporalmente
         if (status == null) return NoContent();
         return Ok(status);
     }
@@ -23,6 +23,18 @@ public class CashierController : ControllerBase
     public async Task<ActionResult<CashierShiftDto>> OpenShift([FromBody] OpenShiftDto dto)
     {
         try { return Ok(await _service.OpenShiftAsync("user1", dto.StartingAmount)); }
+        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
+    }
+    
+    // --- NUEVO ENDPOINT ---
+    [HttpPost("movement")]
+    public async Task<ActionResult> RegisterMovement([FromBody] CreateCashierMovementDto dto)
+    {
+        try 
+        { 
+            await _service.RegisterMovementAsync("user1", dto);
+            return Ok(new { message = "Movimiento registrado exitosamente" }); 
+        }
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
     }
 
@@ -36,7 +48,6 @@ public class CashierController : ControllerBase
     [HttpGet("report")]
     public async Task<ActionResult<CashierReportDto>> GetCurrentReport()
     {
-        // "user1" es hardcoded por ahora, luego vendrá del JWT
         var report = await _service.GetCurrentShiftReportAsync("user1");
         if (report == null) return NotFound("No hay turno abierto para generar reporte.");
         return Ok(report);

@@ -29,8 +29,8 @@ public enum NotificationType
 
 public enum CashierShiftStatus
 {
-    Open,
-    Closed
+    Open = 0,
+    Closed = 1
 }
 
 // --- Enums Generales ---
@@ -56,12 +56,11 @@ public enum ReservationStatus
 
 public enum PaymentMethod
 {
-    None = 0,
-    Cash,
-    CreditCard,
-    DebitCard,
-    Transfer,
-    Other
+    Cash = 0,
+    CreditCard = 1,
+    DebitCard = 2,
+    Transfer = 3,
+    Other = 4
 }
 
 public enum FolioStatus
@@ -73,7 +72,9 @@ public enum FolioStatus
 
 public enum TransactionType
 {
-    Charge,
-    Payment,
-    Adjustment
+    Charge = 0,   // Cargo a habitación
+    Payment = 1,  // Pago de cliente (Ingreso)
+    Expense = 2,  // Gasto/Egreso de caja (Salida) <--- NECESARIO
+    Income = 3    // Ingreso manual a caja (Entrada extra) <--- NECESARIO
 }
+

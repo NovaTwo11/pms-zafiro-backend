@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PmsZafiro.API")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+050e96a0d54f1592f418b737b9e573d99d6ca6e9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6a9c99ebd54c40c0a2730d0fb0aa08eb03ea465a")]
 [assembly: System.Reflection.AssemblyProductAttribute("PmsZafiro.API")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PmsZafiro.API")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
