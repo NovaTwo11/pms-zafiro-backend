@@ -28,10 +28,16 @@ public class CashierRepository : ICashierRepository
         _context.CashierShifts.Add(shift);
         await _context.SaveChangesAsync();
     }
+    
+    public async Task AddTransactionAsync(FolioTransaction transaction)
+    {
+        // Esto fuerza a EF a tratarlo como una inserción (INSERT)
+        _context.Set<FolioTransaction>().Add(transaction);
+        await _context.SaveChangesAsync();
+    }
 
     public async Task UpdateShiftAsync(CashierShift shift)
     {
-        _context.CashierShifts.Update(shift);
         await _context.SaveChangesAsync();
     }
 

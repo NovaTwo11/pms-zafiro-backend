@@ -26,7 +26,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Esto asegura que el Backend devuelva JSON en camelCase (estándar JS)
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
 
 // 4. Inyección de Dependencias
 builder.Services.AddScoped<IReservationRepository, ReservationRepository>();

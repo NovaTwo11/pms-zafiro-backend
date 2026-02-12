@@ -8,4 +8,5 @@ public interface ICashierRepository
     Task<CashierShift?> GetShiftByIdAsync(Guid id);
 
     Task<List<CashierShift>>GetHistoryAsync();
+    Task AddTransactionAsync(FolioTransaction transaction);
 }

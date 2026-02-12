@@ -25,18 +25,6 @@ public class CashierController : ControllerBase
         try { return Ok(await _service.OpenShiftAsync("user1", dto.StartingAmount)); }
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
     }
-    
-    // --- NUEVO ENDPOINT ---
-    [HttpPost("movement")]
-    public async Task<ActionResult> RegisterMovement([FromBody] CreateCashierMovementDto dto)
-    {
-        try 
-        { 
-            await _service.RegisterMovementAsync("user1", dto);
-            return Ok(new { message = "Movimiento registrado exitosamente" }); 
-        }
-        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
-    }
 
     [HttpPost("close")]
     public async Task<ActionResult<CashierShiftDto>> CloseShift([FromBody] CloseShiftDto dto)
@@ -59,4 +47,32 @@ public class CashierController : ControllerBase
         var history = await _service.GetHistoryAsync();
         return Ok(history);
     }
+    
+    [HttpPost("movement")]
+    public async Task<ActionResult> RegisterMovement([FromBody] CreateCashierMovementDto dto)
+    {
+        try 
+        { 
+            if (dto.Amount <= 0) 
+                return BadRequest(new { error = "El monto debe ser mayor a 0." });
+
+            await _service.RegisterMovementAsync("user1", dto);
+        
+            return Ok(new { message = "Movimiento registrado exitosamente" }); 
+        }
+        catch (ArgumentException ex) // Para errores de "tipo de movimiento"
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex) // Para "Caja cerrada"
+        { 
+            return BadRequest(new { error = ex.Message }); 
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR CRÍTICO] RegisterMovement: {ex.Message}");
+            return StatusCode(500, new { error = "Error interno del servidor", details = ex.Message });
+        }
+    }
+    
 }
