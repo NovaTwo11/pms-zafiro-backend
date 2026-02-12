@@ -78,4 +78,26 @@ public class RoomsController : ControllerBase
         
         return NoContent();
     }
+    
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(Guid id, [FromBody] CreateRoomDto dto)
+    {
+        if (id == Guid.Empty) return BadRequest();
+
+        var existingRoom = await _repository.GetByIdAsync(id);
+        if (existingRoom == null) return NotFound();
+
+        // Actualizamos solo los datos administrativos
+        existingRoom.Number = dto.Number;
+        existingRoom.Floor = dto.Floor;
+        existingRoom.Category = dto.Category;
+        existingRoom.BasePrice = dto.BasePrice;
+        
+        // NOTA: No actualizamos 'Status' aquí para no reiniciar 
+        // accidentalmente una habitación que esté "Sucia" u "Ocupada".
+
+        await _repository.UpdateAsync(existingRoom);
+        
+        return NoContent();
+    }
 }
