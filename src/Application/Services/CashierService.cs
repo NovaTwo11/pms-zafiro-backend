@@ -102,6 +102,31 @@ public class CashierService
         return shifts.Select(MapToDto);
     }
 
-    private static CashierShiftDto MapToDto(CashierShift s) => 
-        new(s.Id, s.UserId, s.OpenedAt, s.ClosedAt, s.StartingAmount, s.SystemCalculatedAmount, s.ActualAmount, s.Status);
+    private static CashierShiftDto MapToDto(CashierShift s)
+    {
+        decimal systemAmount = s.SystemCalculatedAmount;
+
+        // LÓGICA DE CORRECCIÓN:
+        // Si el turno está ABIERTO, el SystemCalculatedAmount en BD suele ser 0 o desactualizado.
+        // Lo recalculamos en tiempo real sumando la base + pagos.
+        if (s.Status == CashierShiftStatus.Open && s.Transactions != null)
+        {
+            var totalPayments = s.Transactions
+                .Where(t => t.Type == TransactionType.Payment)
+                .Sum(t => t.Amount);
+
+            systemAmount = s.StartingAmount + totalPayments;
+        }
+
+        return new CashierShiftDto(
+            s.Id,
+            s.UserId,
+            s.OpenedAt,
+            s.ClosedAt,
+            s.StartingAmount,
+            systemAmount, // <--- Usamos el valor calculado dinámicamente
+            s.ActualAmount,
+            s.Status
+        );
+    }
 }
