@@ -117,6 +117,10 @@ public class FoliosController : ControllerBase
 
         var folio = await _repository.GetByIdAsync(id);
         if (folio == null) return NotFound("El folio no existe.");
+        if (dto.Type == TransactionType.Payment && (int)dto.PaymentMethod < 1)
+        {
+            return BadRequest("Para registrar un pago debe especificar un método de pago válido (Efectivo, Tarjeta, etc).");
+        }
 
         // 3. Crear la transacción vinculada al turno
         var transaction = new FolioTransaction
@@ -130,10 +134,10 @@ public class FoliosController : ControllerBase
             Quantity = dto.Quantity > 0 ? dto.Quantity : 1,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
             
+            
             // Si es un Cargo (consumo), el método de pago es None (0).
             // Si es un Pago (abono), respetamos lo que viene del front (1, 2, 4...).
-            PaymentMethod = dto.Type == TransactionType.Charge ? PaymentMethod.None : dto.PaymentMethod,
-        
+            PaymentMethod = dto.Type == TransactionType.Charge ? PaymentMethod.None : dto.PaymentMethod,        
             // ¡ESTO ES LO QUE HACE QUE EL REPORTE FUNCIONE!
             CashierShiftId = openShift.Id, 
         

@@ -129,19 +129,30 @@ public class CashierService
     
     public async Task<CashierShiftDto> CloseShiftAsync(string userId, decimal actualAmount)
     {
+        // 1. Aseguramos traer las transacciones desde el repositorio (ya tienes el Include en el Repo, eso está bien)
         var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
         if (shift == null) throw new InvalidOperationException("No hay un turno abierto para cerrar.");
-        
-        // Calcular el esperado final usando la lógica de MapToDto (reutilización de lógica)
-        // Base + (Pagos + Ingresos) - Gastos
-        var calculatedDto = MapToDto(shift);
-        
-        shift.SystemCalculatedAmount = calculatedDto.SystemCalculatedAmount;
+    
+        // 2. CÁLCULO EXPLÍCITO (Blindaje)
+        var totalIncome = shift.Transactions
+            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+            .Sum(t => t.Amount);
+
+        var totalExpenses = shift.Transactions
+            .Where(t => t.Type == TransactionType.Expense)
+            .Sum(t => t.Amount);
+    
+        var calculatedAmount = (shift.StartingAmount + totalIncome) - totalExpenses;
+    
+        // 3. Actualizamos la entidad
+        shift.SystemCalculatedAmount = calculatedAmount;
         shift.ActualAmount = actualAmount;
         shift.ClosedAt = DateTimeOffset.UtcNow;
         shift.Status = CashierShiftStatus.Closed;
-        
+    
+        // 4. Guardamos cambios
         await _repository.UpdateShiftAsync(shift);
+    
         return MapToDto(shift);
     }
     
@@ -160,18 +171,18 @@ public class CashierService
     {
         decimal systemAmount = s.SystemCalculatedAmount;
 
-        // LÓGICA DE CORRECCIÓN EN TIEMPO REAL:
-        if (s.Status == CashierShiftStatus.Open && s.Transactions != null)
+        // CORRECCIÓN: Calcular SIEMPRE si hay transacciones, sin importar si la caja está abierta o cerrada.
+        // Esto arregla el historial si la base de datos tiene un valor desactualizado.
+        if (s.Transactions != null && s.Transactions.Any())
         {
             var totalIncome = s.Transactions
                 .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
                 .Sum(t => t.Amount);
-            
+        
             var totalExpenses = s.Transactions
                 .Where(t => t.Type == TransactionType.Expense)
                 .Sum(t => t.Amount);
 
-            // La caja debe tener: Base + Entradas - Salidas
             systemAmount = (s.StartingAmount + totalIncome) - totalExpenses;
         }
 

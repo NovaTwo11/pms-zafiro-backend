@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PmsZafiro.Domain")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+20362b1b1d000ba164b2aa80771995966e4bf267")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c46a5a376348b1c547dc0b20591eab841daefd4e")]
 [assembly: System.Reflection.AssemblyProductAttribute("PmsZafiro.Domain")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PmsZafiro.Domain")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
