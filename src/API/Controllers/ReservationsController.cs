@@ -53,25 +53,78 @@ public class ReservationsController : ControllerBase
 
         if (r == null) return NotFound();
 
+        // Buscar el Folio y transacciones asociadas
+        var folio = await _context.Folios.OfType<GuestFolio>()
+            .Include(f => f.Transactions)
+            .FirstOrDefaultAsync(f => f.ReservationId == id);
+
+        var paidAmount = folio?.Transactions
+            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+            .Sum(t => t.Amount) ?? 0;
+
+        var balance = folio != null ? folio.Transactions.Sum(t => 
+                            (t.Type == TransactionType.Charge || t.Type == TransactionType.Expense) ? t.Amount : 
+                            (t.Type == TransactionType.Payment || t.Type == TransactionType.Income) ? -t.Amount : 0) : 0;
+
+        var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+
         var dto = new ReservationDto
         {
             Id = r.Id,
             Code = r.ConfirmationCode,
-            Status = r.Status.ToString(),
+            Status = r.Status.ToString().ToLower(),
+            StatusStep = r.Status == ReservationStatus.Pending ? 1 :
+                         r.Status == ReservationStatus.Confirmed ? 2 :
+                         r.Status == ReservationStatus.CheckedIn ? 3 : 4,
+            RoomId = mainSegment?.Room?.Number ?? "?",
+            RoomName = mainSegment?.Room.Category ?? "Habitación Estándar",
             MainGuestId = r.GuestId,
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
             CheckOut = r.CheckOut,
-            Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
+            Nights = (r.CheckOut.Date - r.CheckIn.Date).Days == 0 ? 1 : (r.CheckOut.Date - r.CheckIn.Date).Days,
+            Adults = r.Adults,
+            Children = r.Children,
+            CreatedDate = r.CreatedAt.DateTime,
+            Notes = r.Notes ?? "",
             TotalAmount = r.TotalAmount,
+            PaidAmount = paidAmount,
+            Balance = balance,
+            FolioId = folio?.Id,
             Segments = r.Segments.Select(s => new ReservationSegmentDto
             {
                 RoomId = s.RoomId,
                 RoomNumber = s.Room?.Number ?? "?",
                 Start = s.CheckIn,
                 End = s.CheckOut
-            }).ToList()
+            }).ToList(),
+            Guests = new List<GuestDetailDto>
+            {
+                new GuestDetailDto // Mapeando titular principal
+                {
+                    Id = r.Guest?.Id.ToString() ?? "",
+                    PrimerNombre = r.Guest?.FirstName ?? "Sin Nombre",
+                    PrimerApellido = r.Guest?.LastName ?? "",
+                    Correo = r.Guest?.Email ?? "",
+                    Telefono = r.Guest?.Phone ?? "",
+                    TipoId = r.Guest?.DocumentType.ToString() ?? "",
+                    NumeroId = r.Guest?.DocumentNumber ?? "",
+                    Nacionalidad = r.Guest?.Nationality ?? "",
+                    EsTitular = true,
+                    IsSigned = r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut
+                }
+            },
+            FolioItems = folio?.Transactions.Select(t => new FolioItemDto
+            {
+                Id = t.Id,
+                Date = t.CreatedAt.ToString("yyyy-MM-dd"),
+                Concept = t.Description ?? "Cargo",
+                Qty = 1,
+                Price = Math.Abs(t.Amount),
+                Total = Math.Abs(t.Amount)
+            }).ToList() ?? new List<FolioItemDto>()
         };
+
         return Ok(dto);
     }
 
