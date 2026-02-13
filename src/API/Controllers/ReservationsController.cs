@@ -36,11 +36,9 @@ public class ReservationsController : ControllerBase
         _context = context;
     }
 
-    // --- GET ACTUALIZADO: Usa la lógica financiera real ---
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReservationDto>>> GetAll()
     {
-        // Usamos el nuevo método del repositorio que calcula Balance y Pagado
         var reservations = await _repository.GetReservationsWithLiveBalanceAsync();
         return Ok(reservations);
     }
@@ -77,15 +75,71 @@ public class ReservationsController : ControllerBase
         return Ok(dto);
     }
 
+    // ==========================================
+    // CREATE: RESERVA MANUAL CON CÁLCULO DE TARIFA
+    // ==========================================
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
+        // 1. Obtener la habitación y sus precios
+        var room = await _context.Rooms
+            .Include(r => r.PriceOverrides)
+            .FirstOrDefaultAsync(r => r.Id == dto.RoomId);
+
+        if (room == null) return BadRequest("La habitación no existe.");
+
+        // 2. Calcular el valor de la estadía (Revisando overrides día por día)
+        decimal calculatedTotal = 0;
+        var checkInDate = dto.CheckIn.Date;
+        var checkOutDate = dto.CheckOut.Date;
+
+        // Validar Day Use (Si entra y sale el mismo día, se cobra 1 noche mínima)
+        if (checkInDate >= checkOutDate)
+        {
+            var overridePrice = room.PriceOverrides.FirstOrDefault(p => p.Date == DateOnly.FromDateTime(checkInDate));
+            calculatedTotal = overridePrice?.Price ?? room.BasePrice;
+        }
+        else
+        {
+            for (var date = checkInDate; date < checkOutDate; date = date.AddDays(1))
+            {
+                var dateOnly = DateOnly.FromDateTime(date);
+                var overridePrice = room.PriceOverrides.FirstOrDefault(p => p.Date == dateOnly);
+                calculatedTotal += overridePrice?.Price ?? room.BasePrice;
+            }
+        }
+
+        // 3. Lógica de Huésped
+        Guest? guest = null;
+        if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
+        {
+            guest = await _guestRepository.GetByIdAsync(guestId);
+        }
+        
+        if (guest == null)
+        {
+            guest = new Guest
+            {
+                FirstName = dto.MainGuestName ?? "Huésped General",
+                LastName = "",
+                DocumentType = IdType.CC,
+                DocumentNumber = "PENDING-" + Guid.NewGuid().ToString().Substring(0, 4),
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            await _guestRepository.AddAsync(guest);
+        }
+
+        // 4. Crear Reserva
         var reservation = new Reservation
         {
-            GuestId = dto.MainGuestId,
-            CheckIn = dto.StartDate.ToDateTime(TimeOnly.MinValue),
-            CheckOut = dto.EndDate.ToDateTime(TimeOnly.MinValue),
-            Status = ReservationStatus.Pending,
+            GuestId = guest.Id,
+            CheckIn = dto.CheckIn,
+            CheckOut = dto.CheckOut,
+            Adults = dto.Adults,
+            Children = dto.Children,
+            Notes = dto.SpecialRequests,
+            TotalAmount = calculatedTotal, // ✅ CÁLCULO APLICADO
+            Status = Enum.TryParse<ReservationStatus>(dto.Status, out var statusParsed) ? statusParsed : ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
         };
@@ -100,14 +154,51 @@ public class ReservationsController : ControllerBase
 
         await _repository.CreateAsync(reservation);
 
+        if (reservation.Status != ReservationStatus.Blocked)
+        {
+            await _notificationRepository.AddAsync(
+                "Nueva Reserva Manual",
+                $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName} por {calculatedTotal:C}",
+                NotificationType.Success,
+                $"/reservas/{reservation.Id}"
+            );
+        }
+
         return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
     }
 
+    // ==========================================
+    // CREATE BOOKING: RESERVA WEB CON CÁLCULO DE TARIFA
+    // ==========================================
     [HttpPost("booking")]
     public async Task<ActionResult<ReservationDto>> CreateBooking(CreateBookingRequestDto dto)
     {
-        Guest? guest = null;
+        var room = await _context.Rooms
+            .Include(r => r.PriceOverrides)
+            .FirstOrDefaultAsync(r => r.Id == dto.RoomId);
 
+        if (room == null) return BadRequest("La habitación no existe.");
+
+        decimal calculatedTotal = 0;
+        var checkInDate = dto.CheckIn.ToDateTime(TimeOnly.MinValue).Date;
+        var checkOutDate = dto.CheckOut.ToDateTime(TimeOnly.MinValue).Date;
+
+        if (checkInDate >= checkOutDate)
+        {
+            var overridePrice = room.PriceOverrides.FirstOrDefault(p => p.Date == DateOnly.FromDateTime(checkInDate));
+            calculatedTotal = overridePrice?.Price ?? room.BasePrice;
+        }
+        else
+        {
+            for (var date = checkInDate; date < checkOutDate; date = date.AddDays(1))
+            {
+                var dateOnly = DateOnly.FromDateTime(date);
+                var overridePrice = room.PriceOverrides.FirstOrDefault(p => p.Date == dateOnly);
+                calculatedTotal += overridePrice?.Price ?? room.BasePrice;
+            }
+        }
+
+        Guest? guest = null;
         if (!string.IsNullOrEmpty(dto.DocNumber))
         {
             guest = await _guestRepository.GetByDocumentAsync(dto.DocNumber);
@@ -132,8 +223,9 @@ public class ReservationsController : ControllerBase
         var reservation = new Reservation
         {
             GuestId = guest.Id,
-            CheckIn = dto.CheckIn.ToDateTime(TimeOnly.MinValue),
-            CheckOut = dto.CheckOut.ToDateTime(TimeOnly.MinValue),
+            CheckIn = checkInDate,
+            CheckOut = checkOutDate,
+            TotalAmount = calculatedTotal, // ✅ CÁLCULO APLICADO
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
@@ -150,7 +242,7 @@ public class ReservationsController : ControllerBase
 
         await _notificationRepository.AddAsync(
             "Nueva Reserva Web",
-            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}",
+            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName} por {calculatedTotal:C}",
             NotificationType.Success,
             $"/reservas/{reservation.Id}"
         );
@@ -268,9 +360,7 @@ public class ReservationsController : ControllerBase
         if (folioInfo == null) 
             return BadRequest(new { message = "No se encontró el folio asociado a la reserva." });
 
-        // Validación de Deuda contra la Base de Datos (Source of Truth)
         var currentBalance = await _folioRepository.GetFolioBalanceAsync(folioInfo.Id);
-        
         decimal toleranceMargin = 100m; 
 
         if (currentBalance > toleranceMargin)
@@ -360,9 +450,6 @@ public class ReservationsController : ControllerBase
         }
     }
     
-    // ==========================================
-    // CANCELAR RESERVA
-    // ==========================================
     [HttpPost("{id}/cancel")]
     public async Task<IActionResult> Cancel(Guid id)
     {
@@ -374,16 +461,12 @@ public class ReservationsController : ControllerBase
 
         reservation.Status = ReservationStatus.Cancelled;
         
-        // Al marcarla como Cancelada, el Frontend la filtrará automáticamente. 
         _context.Reservations.Update(reservation);
         await _context.SaveChangesAsync();
         
         return Ok(new { message = "Reserva cancelada correctamente." });
     }
 
-    // ==========================================
-    // DIVIDIR SEGMENTO (SPLIT)
-    // ==========================================
     [HttpPost("{id}/segments/split")]
     public async Task<IActionResult> SplitSegment(Guid id, [FromBody] SplitSegmentDto dto)
     {
@@ -396,11 +479,9 @@ public class ReservationsController : ControllerBase
 
         var targetSegment = segments[dto.SegmentIndex];
 
-        // Validar fechas
         if (dto.SplitDate <= targetSegment.CheckIn || dto.SplitDate >= targetSegment.CheckOut)
             return BadRequest(new { message = "La fecha de división debe estar estrictamente dentro del rango del segmento actual." });
 
-        // Crear el nuevo fragmento
         var newSegment = new ReservationSegment
         {
             ReservationId = reservation.Id,
@@ -409,7 +490,6 @@ public class ReservationsController : ControllerBase
             CheckOut = targetSegment.CheckOut
         };
 
-        // Acortar el fragmento original
         targetSegment.CheckOut = dto.SplitDate;
 
         _context.Set<ReservationSegment>().Add(newSegment);
@@ -418,9 +498,6 @@ public class ReservationsController : ControllerBase
         return Ok(new { message = "Reserva fragmentada exitosamente." });
     }
 
-    // ==========================================
-    // UNIFICAR SEGMENTOS (MERGE)
-    // ==========================================
     [HttpPost("{id}/segments/merge")]
     public async Task<IActionResult> MergeSegments(Guid id)
     {
@@ -434,19 +511,13 @@ public class ReservationsController : ControllerBase
         var firstSegment = segments.First();
         var lastSegment = segments.Last();
 
-        // Extender el primer segmento para cubrir toda la reserva en la habitación inicial
         firstSegment.CheckOut = lastSegment.CheckOut;
-
-        // Eliminar el resto de fragmentos
         _context.Set<ReservationSegment>().RemoveRange(segments.Skip(1));
         await _context.SaveChangesAsync();
 
         return Ok(new { message = "Segmentos unificados en la habitación principal." });
     }
 
-    // ==========================================
-    // MOVER SEGMENTO (DRAG AND DROP)
-    // ==========================================
     [HttpPut("{id}/segments/{segmentIndex}/move")]
     public async Task<IActionResult> MoveSegment(Guid id, int segmentIndex, [FromBody] MoveSegmentDto dto)
     {
@@ -459,7 +530,6 @@ public class ReservationsController : ControllerBase
 
         var targetSegment = segments[segmentIndex];
 
-        // Validar disponibilidad de la nueva habitación en tiempo real
         bool isOccupied = await _context.Set<ReservationSegment>()
             .AnyAsync(s => s.RoomId == dto.NewRoomId
                         && s.ReservationId != id
@@ -470,7 +540,6 @@ public class ReservationsController : ControllerBase
         if (isOccupied) 
             return BadRequest(new { message = "La habitación destino está ocupada en esas fechas." });
 
-        // Actualizar habitación
         targetSegment.RoomId = dto.NewRoomId;
         await _context.SaveChangesAsync();
 

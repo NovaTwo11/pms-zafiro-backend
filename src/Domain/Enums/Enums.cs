@@ -51,7 +51,8 @@ public enum ReservationStatus
     CheckedIn,
     CheckedOut,
     Cancelled,
-    NoShow
+    NoShow,
+    Blocked
 }
 
 public enum PaymentMethod
