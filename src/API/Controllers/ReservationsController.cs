@@ -48,6 +48,8 @@ public class ReservationsController : ControllerBase
     {
         var r = await _context.Reservations
             .Include(x => x.Guest)
+            // Si tienes una relación de acompañantes en tu modelo, inclúyela aquí.
+            // .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
             .Include(x => x.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(x => x.Id == id);
 
@@ -68,6 +70,29 @@ public class ReservationsController : ControllerBase
 
         var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
 
+        // Construir la lista de huéspedes (Titular + Acompañantes si existieran)
+        var guestsList = new List<GuestDetailDto>();
+
+        // Agregar titular
+        if (r.Guest != null)
+        {
+            guestsList.Add(new GuestDetailDto
+            {
+                Id = r.Guest.Id.ToString(),
+                PrimerNombre = r.Guest.FirstName,
+                PrimerApellido = r.Guest.LastName,
+                Correo = r.Guest.Email,
+                Telefono = r.Guest.Phone,
+                TipoId = r.Guest.DocumentType.ToString(),
+                NumeroId = r.Guest.DocumentNumber,
+                Nacionalidad = r.Guest.Nationality,
+                EsTitular = true,
+                IsSigned = r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut
+            });
+        }
+
+        // Si tienes lógica para acompañantes (ej: r.Companions), agrégala aquí a guestsList
+
         var dto = new ReservationDto
         {
             Id = r.Id,
@@ -76,8 +101,11 @@ public class ReservationsController : ControllerBase
             StatusStep = r.Status == ReservationStatus.Pending ? 1 :
                          r.Status == ReservationStatus.Confirmed ? 2 :
                          r.Status == ReservationStatus.CheckedIn ? 3 : 4,
-            RoomId = mainSegment?.Room?.Number ?? "?",
+            
+            // Usamos RoomId para el número visual ("101") porque así lo espera tu frontend actual
+            RoomId = mainSegment?.Room?.Number ?? "?", 
             RoomName = mainSegment?.Room.Category ?? "Habitación Estándar",
+            
             MainGuestId = r.GuestId,
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
@@ -98,30 +126,19 @@ public class ReservationsController : ControllerBase
                 Start = s.CheckIn,
                 End = s.CheckOut
             }).ToList(),
-            Guests = new List<GuestDetailDto>
-            {
-                new GuestDetailDto // Mapeando titular principal
-                {
-                    Id = r.Guest?.Id.ToString() ?? "",
-                    PrimerNombre = r.Guest?.FirstName ?? "Sin Nombre",
-                    PrimerApellido = r.Guest?.LastName ?? "",
-                    Correo = r.Guest?.Email ?? "",
-                    Telefono = r.Guest?.Phone ?? "",
-                    TipoId = r.Guest?.DocumentType.ToString() ?? "",
-                    NumeroId = r.Guest?.DocumentNumber ?? "",
-                    Nacionalidad = r.Guest?.Nationality ?? "",
-                    EsTitular = true,
-                    IsSigned = r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut
-                }
-            },
+            
+            // Asignamos la lista que construimos arriba
+            Guests = guestsList,
+            
+            // Mapeamos los items del folio para la pestaña de Finanzas
             FolioItems = folio?.Transactions.Select(t => new FolioItemDto
             {
                 Id = t.Id,
                 Date = t.CreatedAt.ToString("yyyy-MM-dd"),
-                Concept = t.Description ?? "Cargo",
+                Concept = t.Description ?? "Movimiento",
                 Qty = 1,
-                Price = Math.Abs(t.Amount),
-                Total = Math.Abs(t.Amount)
+                Price = t.Amount, // Enviamos el monto real (positivo/negativo)
+                Total = Math.Abs(t.Amount) // Para visualización absoluta si se requiere
             }).ToList() ?? new List<FolioItemDto>()
         };
 
@@ -571,7 +588,7 @@ public class ReservationsController : ControllerBase
         return Ok(new { message = "Segmentos unificados en la habitación principal." });
     }
 
-    [HttpPut("{id}/segments/{segmentIndex}/move")]
+    [HttpPost("{id}/segments/{segmentIndex}/move")]
     public async Task<IActionResult> MoveSegment(Guid id, int segmentIndex, [FromBody] MoveSegmentDto dto)
     {
         var reservation = await _context.Reservations.Include(r => r.Segments).FirstOrDefaultAsync(r => r.Id == id);
