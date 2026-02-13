@@ -7,13 +7,13 @@ public class Reservation
     public Guid Id { get; set; }
     public string ConfirmationCode { get; set; } = string.Empty;
     
-    // Relaciones
     public Guid GuestId { get; set; }
-    public Guest Guest { get; set; } = null!; // ✅ Propiedad de navegación necesaria
-    
-    public Guid RoomId { get; set; }
-    public Room Room { get; set; } = null!;   // ✅ Propiedad de navegación necesaria
+    public Guest Guest { get; set; } = null!;
 
+    // ✅ CAMBIO CLAVE: Relación 1:N con Segmentos
+    public ICollection<ReservationSegment> Segments { get; set; } = new List<ReservationSegment>();
+
+    // CheckIn/CheckOut globales (limites de la reserva completa)
     public DateTime CheckIn { get; set; }
     public DateTime CheckOut { get; set; }
     

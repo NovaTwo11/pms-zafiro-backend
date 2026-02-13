@@ -17,12 +17,12 @@ public class FolioRepository : IFolioRepository
 
     public async Task<Folio?> GetByIdAsync(Guid id)
     {
-        // Carga base polimórfica (trae GuestFolio o ExternalFolio según el discriminador)
+        // Carga base polimórfica
         var folio = await _context.Folios
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.Id == id);
 
-        // Carga explicita de relaciones solo si es GuestFolio
+        // Carga explícita de relaciones complejas para GuestFolio
         if (folio is GuestFolio guestFolio)
         {
             await _context.Entry(guestFolio)
@@ -32,7 +32,13 @@ public class FolioRepository : IFolioRepository
             if (guestFolio.Reservation != null)
             {
                 await _context.Entry(guestFolio.Reservation).Reference(r => r.Guest).LoadAsync();
-                await _context.Entry(guestFolio.Reservation).Reference(r => r.Room).LoadAsync();
+                
+                // REFACTORIZADO: Cargar Segmentos -> Habitación en lugar de Habitación directa
+                await _context.Entry(guestFolio.Reservation)
+                    .Collection(r => r.Segments)
+                    .Query()
+                    .Include(s => s.Room)
+                    .LoadAsync();
             }
         }
 
@@ -42,9 +48,9 @@ public class FolioRepository : IFolioRepository
     public async Task<GuestFolio?> GetByReservationIdAsync(Guid reservationId)
     {
         return await _context.Folios
-            .OfType<GuestFolio>() // Filtra solo GuestFolios
+            .OfType<GuestFolio>()
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation)
+            .Include(f => f.Reservation).ThenInclude(r => r.Segments).ThenInclude(s => s.Room) // Incluimos segmentos
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
     }
 
@@ -75,10 +81,11 @@ public class FolioRepository : IFolioRepository
 
     public async Task<IEnumerable<GuestFolio>> GetActiveGuestFoliosAsync()
     {
+        // REFACTORIZADO: Incluir Segmentos y sus Habitaciones
         return await _context.Folios
             .OfType<GuestFolio>()
             .Include(f => f.Reservation).ThenInclude(r => r.Guest)
-            .Include(f => f.Reservation).ThenInclude(r => r.Room)
+            .Include(f => f.Reservation).ThenInclude(r => r.Segments).ThenInclude(s => s.Room)
             .Include(f => f.Transactions)
             .Where(f => f.Status == FolioStatus.Open)
             .ToListAsync();

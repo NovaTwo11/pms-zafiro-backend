@@ -24,30 +24,49 @@ public class FoliosController : ControllerBase
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
         var folios = await _repository.GetActiveGuestFoliosAsync();
+    
         var result = folios.Select(f => {
             var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
             var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+        
             var nights = 0;
-            
+            string roomNumber = "?";
+            DateTime? checkIn = null;
+            DateTime? checkOut = null;
+            string guestName = "Desconocido";
+
             if (f.Reservation != null)
             {
+                guestName = f.Reservation.Guest?.FullName ?? "Desconocido";
+                checkIn = f.Reservation.CheckIn;
+                checkOut = f.Reservation.CheckOut;
+            
                 nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
                 if (nights < 1) nights = 1;
+
+                // Lógica Split Stays: Buscar el segmento activo HOY o el primero
+                var activeSegment = f.Reservation.Segments
+                                        .OrderBy(s => s.CheckIn)
+                                        .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
+                                    ?? f.Reservation.Segments.FirstOrDefault();
+
+                roomNumber = activeSegment?.Room?.Number ?? "?";
             }
-            
+        
             return new 
             {
                 Id = f.Id,
                 Type = "guest",
                 Status = f.Status.ToString(),
                 Balance = charges - payments,
-                GuestName = f.Reservation?.Guest?.FullName ?? "Desconocido",
-                RoomNumber = f.Reservation?.Room?.Number ?? "?",
-                CheckIn = f.Reservation?.CheckIn,
-                CheckOut = f.Reservation?.CheckOut,
+                GuestName = guestName,
+                RoomNumber = roomNumber,
+                CheckIn = checkIn,
+                CheckOut = checkOut,
                 Nights = nights
             };
         });
+    
         return Ok(result);
     }
 
@@ -175,24 +194,29 @@ public class FoliosController : ControllerBase
                 UnitPrice = t.UnitPrice,
                 Quantity = t.Quantity,
                 User = t.CreatedByUserId,
-                PaymentMethod = t.PaymentMethod // Esto devolverá el enum como string o int según configuración JSON
+                PaymentMethod = t.PaymentMethod 
             }).ToList()
         };
 
-        if (folio is GuestFolio guestFolio)
+        if (folio is GuestFolio guestFolio && guestFolio.Reservation != null)
         {
             dto.FolioType = "guest";
-            dto.ReservationId = guestFolio.ReservationId; 
-            if (guestFolio.Reservation != null)
-            {
-                dto.GuestName = guestFolio.Reservation.Guest?.FullName ?? "Huésped";
-                dto.RoomNumber = guestFolio.Reservation.Room?.Number ?? "N/A";
-                dto.CheckIn = guestFolio.Reservation.CheckIn;
-                dto.CheckOut = guestFolio.Reservation.CheckOut;
-                
-                var nights = (guestFolio.Reservation.CheckOut - guestFolio.Reservation.CheckIn).Days;
-                dto.Nights = nights < 1 ? 1 : nights;
-            }
+            dto.ReservationId = guestFolio.ReservationId;
+            
+            // --- FIX PARA SPLIT STAYS ---
+            // Intentamos obtener el segmento actual (hoy) o el primero si es futuro/pasado
+            var activeSegment = guestFolio.Reservation.Segments
+                .OrderBy(s => s.CheckIn)
+                .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
+                ?? guestFolio.Reservation.Segments.FirstOrDefault();
+
+            dto.GuestName = guestFolio.Reservation.Guest?.FullName ?? "Huésped";
+            dto.RoomNumber = activeSegment?.Room?.Number ?? "N/A"; // Tomamos el número del segmento
+            dto.CheckIn = guestFolio.Reservation.CheckIn;
+            dto.CheckOut = guestFolio.Reservation.CheckOut;
+            
+            var nights = (guestFolio.Reservation.CheckOut - guestFolio.Reservation.CheckIn).Days;
+            dto.Nights = nights < 1 ? 1 : nights;
         }
         else if (folio is ExternalFolio externalFolio)
         {
@@ -200,6 +224,7 @@ public class FoliosController : ControllerBase
             dto.Alias = externalFolio.Alias;
             dto.Description = externalFolio.Description;
         }
+        
         return dto;
     }
 }

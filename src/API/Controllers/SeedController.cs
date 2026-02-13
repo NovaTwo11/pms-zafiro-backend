@@ -11,7 +11,7 @@ namespace PmsZafiro.API.Controllers;
 public class SeedController : ControllerBase
 {
     private readonly PmsDbContext _context;
-    private readonly Random _random = new();
+    private readonly Random _random = new Random(12345); 
 
     public SeedController(PmsDbContext context)
     {
@@ -19,193 +19,284 @@ public class SeedController : ControllerBase
     }
 
     [HttpPost("init")]
-    public async Task<IActionResult> InitializeDatabase()
+    public async Task<IActionResult> Initialize()
     {
-        // 1. LIMPIEZA TOTAL (Orden inverso por FKs)
-        _context.Set<FolioTransaction>().RemoveRange(await _context.Set<FolioTransaction>().ToListAsync());
-        _context.Folios.RemoveRange(await _context.Folios.ToListAsync());
-        _context.Reservations.RemoveRange(await _context.Reservations.ToListAsync());
-        _context.CashierShifts.RemoveRange(await _context.CashierShifts.ToListAsync());
-        _context.Guests.RemoveRange(await _context.Guests.ToListAsync());
-        _context.Rooms.RemoveRange(await _context.Rooms.ToListAsync());
-        _context.Products.RemoveRange(await _context.Products.ToListAsync());
-        await _context.SaveChangesAsync();
+        // 1. Limpieza de Base de Datos
+        // Usamos ExecuteSqlRawAsync para las tablas con herencia (TPT) donde ExecuteDelete falla.
+        
+        // Primero borramos transacciones (Hijos)
+        await _context.FolioTransactions.ExecuteDeleteAsync();
 
-        // 2. PRODUCTOS (Minibar/Servicios)
-        var products = new List<Product>
-        {
-            new() { Id = Guid.NewGuid(), Name = "Coca Cola", UnitPrice = 5000, Category = "Minibar", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Cerveza Club Colombia", UnitPrice = 8000, Category = "Minibar", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Lavandería Express", UnitPrice = 25000, Category = "Servicios", Stock = 999, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Desayuno Buffet", UnitPrice = 35000, Category = "Restaurante", Stock = 999, IsActive = true, CreatedAt = DateTime.UtcNow }
-        };
-        await _context.Products.AddRangeAsync(products);
+        // FIX: Borrado manual de jerarquía TPT (Hijos primero, luego Padre)
+        // Nota: Si tus tablas tienen nombres diferentes en BD, ajústalos aquí. 
+        // Basado en tu DbContext: GuestFolios, ExternalFolios, Folios.
+        await _context.Database.ExecuteSqlRawAsync("DELETE FROM GuestFolios"); 
+        await _context.Database.ExecuteSqlRawAsync("DELETE FROM ExternalFolios");
+        await _context.Database.ExecuteSqlRawAsync("DELETE FROM Folios");
 
-        // 3. HABITACIONES (30 habitaciones para más volumen)
+        // El resto de entidades simples sí soportan ExecuteDeleteAsync
+        await _context.ReservationSegments.ExecuteDeleteAsync();
+        await _context.Reservations.ExecuteDeleteAsync();
+        await _context.Products.ExecuteDeleteAsync();
+        await _context.Rooms.ExecuteDeleteAsync();
+        await _context.Guests.ExecuteDeleteAsync();
+        
+        // Limpieza de caja (si aplica)
+        await _context.CashierShifts.ExecuteDeleteAsync();
+
+        // 2. Crear Datos Maestros
+        var rooms = await CreateRooms();
+        var guests = await CreateGuests();
+        var products = await CreateProducts();
+
+        // 3. Generar Escenarios
+        await CreateHistoricalReservations(rooms, guests, products);
+        await CreateActiveReservations(rooms, guests, products);
+        await CreateFutureReservations(rooms, guests);
+        await CreateSplitStayReservation(rooms, guests[0]);
+
+        return Ok(new { message = "Base de datos reiniciada y poblada correctamente." });
+    }
+
+    // --- MÉTODOS DE GENERACIÓN (Sin cambios lógicos, solo asegurando nombres correctos) ---
+
+    private async Task<List<Room>> CreateRooms()
+    {
         var rooms = new List<Room>();
-        for (int i = 101; i <= 130; i++)
+        var types = new[] { "Sencilla", "Doble", "Suite", "Familiar" };
+        var prices = new[] { 150000m, 220000m, 350000m, 280000m };
+
+        for (int floor = 1; floor <= 3; floor++)
         {
-            var floor = i < 115 ? 1 : 2;
-            var type = i % 5 == 0 ? "Suite" : (i % 2 == 0 ? "Doble" : "Sencilla");
-            var price = type == "Suite" ? 450000 : (type == "Doble" ? 220000 : 150000);
-            
-            rooms.Add(new Room
+            for (int num = 1; num <= 10; num++)
             {
-                Id = Guid.NewGuid(),
-                Number = i.ToString(),
-                Floor = floor,
-                Category = type,
-                BasePrice = price,
-                Status = RoomStatus.Available
-            });
+                var typeIndex = _random.Next(types.Length);
+                var room = new Room
+                {
+                    Id = Guid.NewGuid(),
+                    Number = $"{floor}{num:00}",
+                    Floor = floor,
+                    Category = types[typeIndex],
+                    BasePrice = prices[typeIndex],
+                    Status = RoomStatus.Available // Asegúrate que tu Enum tenga Clean o Available
+                };
+                rooms.Add(room);
+            }
         }
         await _context.Rooms.AddRangeAsync(rooms);
+        await _context.SaveChangesAsync();
+        return rooms;
+    }
 
-        // 4. HUÉSPEDES MASIVOS (200 perfiles)
-        var firstNames = new[] { "Juan", "Maria", "Carlos", "Ana", "Pedro", "Luisa", "Jorge", "Sofia", "Diego", "Valentina", "Andres", "Isabella" };
-        var lastNames = new[] { "Garcia", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Perez", "Sanchez", "Ramirez", "Torres" };
-        var nationalities = new[] { "Colombia", "Colombia", "Colombia", "USA", "España", "México", "Argentina", "Francia", "Alemania", "Brasil" };
-        
+    private async Task<List<Guest>> CreateGuests()
+    {
         var guests = new List<Guest>();
-        for (int i = 0; i < 200; i++)
+        var names = new[] { "Juan", "Maria", "Carlos", "Ana", "Pedro", "Sofia" };
+        var lastNames = new[] { "Perez", "Gomez", "Rodriguez", "Lopez" };
+
+        for (int i = 0; i < 50; i++)
         {
             guests.Add(new Guest
             {
                 Id = Guid.NewGuid(),
-                FirstName = firstNames[_random.Next(firstNames.Length)],
+                FirstName = names[_random.Next(names.Length)],
                 LastName = lastNames[_random.Next(lastNames.Length)],
-                Email = $"user{i}@example.com",
-                Phone = $"300{_random.Next(1000000, 9999999)}",
-                DocumentNumber = $"{_random.Next(10000000, 99999999)}",
                 DocumentType = IdType.CC,
-                Nationality = nationalities[_random.Next(nationalities.Length)],
-                CreatedAt = DateTime.UtcNow.AddMonths(-3)
+                DocumentNumber = _random.Next(10000000, 99999999).ToString(),
+                Email = $"guest{i}@test.com",
+                Phone = "3001234567",
+                Nationality = "Colombia",
+                CreatedAt = DateTimeOffset.UtcNow.AddMonths(-6)
             });
         }
         await _context.Guests.AddRangeAsync(guests);
         await _context.SaveChangesAsync();
-
-        // 5. SIMULACIÓN TEMPORAL (Últimos 90 días)
-        var startDate = DateTime.UtcNow.Date.AddDays(-90);
-        var today = DateTime.UtcNow.Date;
-        
-        // Iteramos día por día para simular ocupación realista
-        for (var date = startDate; date <= today.AddDays(15); date = date.AddDays(1))
-        {
-            // Determinamos ocupación objetivo del día (Viernes/Sabado más alto)
-            bool isWeekend = date.DayOfWeek == DayOfWeek.Friday || date.DayOfWeek == DayOfWeek.Saturday;
-            int targetOccupancy = isWeekend ? _random.Next(20, 28) : _random.Next(10, 20); // De 30 habitaciones
-
-            // Intentamos llenar habitaciones disponibles
-            var availableRooms = rooms.OrderBy(x => _random.Next()).ToList();
-            int roomsBookedToday = 0;
-
-            foreach (var room in availableRooms)
-            {
-                if (roomsBookedToday >= targetOccupancy) break;
-
-                // Verificamos si la habitación ya está ocupada en esta fecha (lógica simplificada para seeding)
-                bool isOccupied = await _context.Reservations.AnyAsync(r => 
-                    r.RoomId == room.Id && 
-                    r.Status != ReservationStatus.Cancelled &&
-                    date >= r.CheckIn && date < r.CheckOut);
-                
-                if (isOccupied) continue;
-
-                // Crear Reserva
-                var nights = isWeekend ? _random.Next(1, 3) : _random.Next(1, 5);
-                var checkInDate = date;
-                var checkOutDate = date.AddDays(nights);
-                
-                // Definir estado basado en el tiempo
-                ReservationStatus status;
-                if (checkOutDate < today) status = ReservationStatus.CheckedOut;
-                else if (checkInDate <= today && checkOutDate > today) status = ReservationStatus.CheckedIn;
-                else status = ReservationStatus.Confirmed;
-
-                // Si es CheckedIn, actualizar estado real de la habitación
-                if (status == ReservationStatus.CheckedIn)
-                {
-                    var dbRoom = await _context.Rooms.FindAsync(room.Id);
-                    if(dbRoom != null) dbRoom.Status = RoomStatus.Occupied;
-                }
-
-                var guest = guests[_random.Next(guests.Count)];
-                await CreateReservationFlow(room, guest, checkInDate, checkOutDate, status);
-                
-                roomsBookedToday++;
-                
-                // Saltamos los días que dura esta reserva para no iterar sobre ellos en el loop externo innecesariamente
-                // (Nota: En un seeder simple iteramos por fecha de inicio, así que está bien).
-            }
-        }
-        
-        await _context.SaveChangesAsync();
-        return Ok(new { Message = "Seeding Masivo Completado: +90 días de historia, ~60% ocupación promedio." });
+        return guests;
     }
 
-    private async Task CreateReservationFlow(Room room, Guest guest, DateTime checkIn, DateTime checkOut, ReservationStatus status)
+    private async Task<List<Product>> CreateProducts()
     {
-        var total = room.BasePrice * (decimal)(checkOut - checkIn).TotalDays;
+        var products = new List<Product>
+        {
+            // Ojo: Usamos UnitPrice porque así está en tu entidad Product
+            new() { Name = "Coca Cola", UnitPrice = 5000, Category = "Minibar", Stock = 100 },
+            new() { Name = "Agua", UnitPrice = 4000, Category = "Minibar", Stock = 100 },
+            new() { Name = "Lavandería", UnitPrice = 25000, Category = "Servicios", Stock = 999 }
+        };
+        await _context.Products.AddRangeAsync(products);
+        await _context.SaveChangesAsync();
+        return products;
+    }
 
-        // 1. Reserva
-        var reservation = new Reservation
+    private async Task CreateHistoricalReservations(List<Room> rooms, List<Guest> guests, List<Product> products)
+    {
+        for (int i = 0; i < 30; i++)
+        {
+            var room = rooms[_random.Next(rooms.Count)];
+            var guest = guests[_random.Next(guests.Count)];
+            var checkIn = DateTime.UtcNow.Date.AddDays(-_random.Next(10, 60));
+            var checkOut = checkIn.AddDays(_random.Next(1, 4));
+
+            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedOut, products, true);
+        }
+    }
+
+    private async Task CreateActiveReservations(List<Room> rooms, List<Guest> guests, List<Product> products)
+    {
+        var activeRooms = rooms.Take(5).ToList();
+        foreach (var room in activeRooms)
+        {
+            var guest = guests[_random.Next(guests.Count)];
+            var checkIn = DateTime.UtcNow.Date.AddDays(-1);
+            var checkOut = checkIn.AddDays(3);
+
+            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedIn, products, false);
+            
+            room.Status = RoomStatus.Occupied;
+            _context.Rooms.Update(room);
+        }
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task CreateFutureReservations(List<Room> rooms, List<Guest> guests)
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            var room = rooms[_random.Next(rooms.Count)];
+            var guest = guests[_random.Next(guests.Count)];
+            var checkIn = DateTime.UtcNow.Date.AddDays(_random.Next(5, 20));
+            var checkOut = checkIn.AddDays(2);
+
+            var res = new Reservation
+            {
+                Id = Guid.NewGuid(),
+                ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 6).ToUpper(),
+                GuestId = guest.Id,
+                CheckIn = checkIn,
+                CheckOut = checkOut,
+                Status = ReservationStatus.Confirmed,
+                TotalAmount = room.BasePrice * 2,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            
+            // Segmento único
+            res.Segments.Add(new ReservationSegment
+            {
+                Id = Guid.NewGuid(),
+                ReservationId = res.Id,
+                RoomId = room.Id,
+                CheckIn = checkIn,
+                CheckOut = checkOut
+            });
+
+            await _context.Reservations.AddAsync(res);
+        }
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task CreateSplitStayReservation(List<Room> rooms, Guest guest)
+    {
+        var room1 = rooms.First(r => r.Number == "101");
+        var room2 = rooms.First(r => r.Number == "102");
+        
+        var checkIn = DateTime.UtcNow.Date.AddDays(2);
+        var moveDate = checkIn.AddDays(2);
+        var checkOut = moveDate.AddDays(1);
+
+        var res = new Reservation
         {
             Id = Guid.NewGuid(),
-            ConfirmationCode = $"RES-{_random.Next(10000, 99999)}",
+            ConfirmationCode = "SPLIT-01",
             GuestId = guest.Id,
-            RoomId = room.Id,
+            CheckIn = checkIn,
+            CheckOut = checkOut,
+            Status = ReservationStatus.Confirmed,
+            TotalAmount = (room1.BasePrice * 2) + room2.BasePrice,
+            Notes = "Split Stay Demo",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        res.Segments.Add(new ReservationSegment { RoomId = room1.Id, CheckIn = checkIn, CheckOut = moveDate });
+        res.Segments.Add(new ReservationSegment { RoomId = room2.Id, CheckIn = moveDate, CheckOut = checkOut });
+
+        await _context.Reservations.AddAsync(res);
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task CreateFullReservationFlow(Room room, Guest guest, DateTime checkIn, DateTime checkOut, ReservationStatus status, List<Product> products, bool isFinished)
+    {
+        var nights = (checkOut - checkIn).Days;
+        var total = room.BasePrice * nights;
+
+        var res = new Reservation
+        {
+            Id = Guid.NewGuid(),
+            ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 6).ToUpper(),
+            GuestId = guest.Id,
             CheckIn = checkIn,
             CheckOut = checkOut,
             Status = status,
-            Adults = _random.Next(1, 3),
-            Children = 0,
             TotalAmount = total,
-            CreatedAt = checkIn.AddDays(-_random.Next(1, 10)) // Reservada unos días antes
+            CreatedAt = checkIn.AddDays(-5)
         };
-        await _context.Reservations.AddAsync(reservation);
 
-        // 2. Folio
+        res.Segments.Add(new ReservationSegment
+        {
+            Id = Guid.NewGuid(),
+            ReservationId = res.Id,
+            RoomId = room.Id,
+            CheckIn = checkIn,
+            CheckOut = checkOut
+        });
+
+        await _context.Reservations.AddAsync(res);
+
         var folio = new GuestFolio
         {
             Id = Guid.NewGuid(),
-            ReservationId = reservation.Id,
-            Status = status == ReservationStatus.CheckedOut ? FolioStatus.Closed : FolioStatus.Open,
+            ReservationId = res.Id,
+            Status = isFinished ? FolioStatus.Closed : FolioStatus.Open,
             CreatedAt = checkIn
         };
         await _context.Folios.AddAsync(folio);
 
-        // 3. Transacción (Cargo Alojamiento)
-        await _context.Set<FolioTransaction>().AddAsync(new FolioTransaction
+        await _context.FolioTransactions.AddAsync(new FolioTransaction
         {
-            Id = Guid.NewGuid(),
             FolioId = folio.Id,
-            Type = TransactionType.Charge,
             Amount = total,
-            Description = $"Alojamiento {room.Category} x {(checkOut-checkIn).TotalDays} noches",
-            CreatedAt = checkIn.AddHours(14) // Checkin time
+            Description = "Hospedaje",
+            Type = TransactionType.Charge,
+            CreatedAt = checkIn
         });
 
-        // 4. Pago (Si aplica)
-        // Si ya salió o está in-house, asumimos pago parcial o total
-        if (status == ReservationStatus.CheckedOut || status == ReservationStatus.CheckedIn)
+        if (_random.NextDouble() > 0.5)
         {
-            // A veces pagan todo, a veces dejan saldo si están InHouse
-            bool payFull = status == ReservationStatus.CheckedOut || _random.Next(0, 2) == 0; 
-            
-            if (payFull)
+            var p = products[0];
+            await _context.FolioTransactions.AddAsync(new FolioTransaction
             {
-                await _context.Set<FolioTransaction>().AddAsync(new FolioTransaction
-                {
-                    Id = Guid.NewGuid(),
-                    FolioId = folio.Id,
-                    Type = TransactionType.Payment,
-                    Amount = total,
-                    Description = "Pago Saldo Total",
-                    PaymentMethod = PaymentMethod.CreditCard,
-                    CreatedAt = status == ReservationStatus.CheckedOut ? checkOut.AddHours(10) : checkIn.AddHours(15)
-                });
-            }
+                FolioId = folio.Id,
+                Amount = p.UnitPrice,
+                Description = $"Consumo {p.Name}",
+                Type = TransactionType.Charge,
+                Quantity = 1,
+                UnitPrice = p.UnitPrice,
+                CreatedAt = checkIn.AddHours(1)
+            });
         }
+
+        if (isFinished)
+        {
+            await _context.FolioTransactions.AddAsync(new FolioTransaction
+            {
+                FolioId = folio.Id,
+                Amount = res.TotalAmount,
+                Description = "Pago Total",
+                Type = TransactionType.Payment,
+                PaymentMethod = PaymentMethod.CreditCard,
+                CreatedAt = checkOut
+            });
+        }
+
+        await _context.SaveChangesAsync();
     }
 }

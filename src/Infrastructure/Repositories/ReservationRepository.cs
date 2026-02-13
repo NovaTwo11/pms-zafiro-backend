@@ -17,9 +17,10 @@ public class ReservationRepository : IReservationRepository
 
     public async Task<IEnumerable<Reservation>> GetAllAsync()
     {
+        // REFACTORIZADO: Incluir Segmentos -> Room
         return await _context.Reservations
             .Include(r => r.Guest)
-            .Include(r => r.Room)
+            .Include(r => r.Segments).ThenInclude(s => s.Room)
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync();
     }
@@ -28,7 +29,7 @@ public class ReservationRepository : IReservationRepository
     {
         return await _context.Reservations
             .Include(r => r.Guest)
-            .Include(r => r.Room)
+            .Include(r => r.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(r => r.Id == id);
     }
 
@@ -49,13 +50,11 @@ public class ReservationRepository : IReservationRepository
     {
         return await _context.Reservations
             .Include(r => r.Guest)
-            .Include(r => r.Room)
+            .Include(r => r.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(r => r.ConfirmationCode == code);
     }
 
     // --- LÓGICA DE CHECK-OUT TRANSACCIONAL ---
-    // Utiliza ExecutionStrategy para evitar errores de conexión intermitentes
-    // y maneja transacciones explícitas para asegurar integridad.
     public async Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
@@ -71,28 +70,30 @@ public class ReservationRepository : IReservationRepository
                 // 2. Actualizar Folio
                 _context.Folios.Update(folio);
 
-                // 3. Actualizar Habitación (si existe)
+                // 3. Actualizar Habitación (si existe, pasada por el Controller)
                 if (room != null)
                 {
                     _context.Rooms.Update(room);
                 }
 
-                // 4. Guardar y confirmar
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
             catch
             {
                 await transaction.RollbackAsync();
-                throw; // Re-lanza la excepción para que el Controller la registre
+                throw;
             }
         });
     }
 
     public async Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId)
     {
+        // REFACTORIZADO: Buscar si ALGÚN segmento de la reserva usa esa habitación
+        // y la reserva está activa.
         return await _context.Reservations
-            .Where(r => r.RoomId == roomId &&
+            .Include(r => r.Segments)
+            .Where(r => r.Segments.Any(s => s.RoomId == roomId) &&
                        (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
             .ToListAsync();
     }
@@ -109,10 +110,10 @@ public class ReservationRepository : IReservationRepository
                 // 1. Actualizar Reserva
                 _context.Reservations.Update(reservation);
             
-                // 2. Actualizar Habitación
+                // 2. Actualizar Habitación (Pasada por el controller, derivada del primer segmento)
                 _context.Rooms.Update(room);
 
-                // 3. Crear Folio (Solo si no existe, validado en Controller, pero aquí se persiste)
+                // 3. Crear Folio
                 await _context.Folios.AddAsync(newFolio);
 
                 await _context.SaveChangesAsync();

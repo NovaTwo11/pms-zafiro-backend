@@ -11,49 +11,43 @@ public class PmsDbContext : DbContext
     public DbSet<Guest> Guests { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Folio> Folios { get; set; }
+    public DbSet<FolioTransaction> FolioTransactions { get; set; }
     public DbSet<AppNotification> Notifications { get; set; }
     public DbSet<CashierShift> CashierShifts { get; set; }
     public DbSet<Product> Products { get; set; }
+    public DbSet<ReservationSegment> ReservationSegments { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+
+    // --- CONFIGURACIÓN DE RESERVAS (NUEVA ARQUITECTURA) ---
+    
+    // 1. La Reserva ya no tiene RoomId directo. Tiene una colección de segmentos.
+    modelBuilder.Entity<Reservation>()
+        .HasMany(r => r.Segments)
+        .WithOne(s => s.Reservation)
+        .HasForeignKey(s => s.ReservationId)
+        .OnDelete(DeleteBehavior.Cascade); // Si borras la reserva, se borran los segmentos
+
+    // 2. Configuración del Segmento (La tabla intermedia que tiene el RoomId)
+    modelBuilder.Entity<ReservationSegment>(entity =>
     {
-        base.OnModelCreating(modelBuilder);
-        
-        // Configuración de Herencia de Folios (Table-Per-Hierarchy)
-        modelBuilder.Entity<Folio>()
-            .HasDiscriminator<string>("FolioType")
-            .HasValue<GuestFolio>("Guest")
-            .HasValue<ExternalFolio>("External");
-            
-        // Relación Reserva -> Huésped (1 a N)
-        modelBuilder.Entity<Reservation>()
-            .HasOne(r => r.Guest)
-            .WithMany(g => g.Reservations)
-            .HasForeignKey(r => r.GuestId);
+        entity.ToTable("ReservationSegments");
+        entity.HasKey(s => s.Id);
 
-        // Relación Reserva -> Habitación
-        modelBuilder.Entity<Reservation>()
-            .HasOne(r => r.Room)
-            .WithMany()
-            .HasForeignKey(r => r.RoomId);
-            
-        // Relación Transacción -> Turno de Caja
-        modelBuilder.Entity<FolioTransaction>()
-            .HasOne(t => t.CashierShift)
-            .WithMany(s => s.Transactions)
-            .HasForeignKey(t => t.CashierShiftId)
-            .OnDelete(DeleteBehavior.Restrict);
-        
-        // CONFIGURACIÓN DE DINERO (DECIMALES)
-        var decimalProps = modelBuilder.Model
-            .GetEntityTypes()
-            .SelectMany(t => t.GetProperties())
-            .Where(p => p.ClrType == typeof(decimal) || p.ClrType == typeof(decimal?));
+        // Relación Segmento -> Habitación
+        entity.HasOne(s => s.Room)
+            .WithMany() // Una habitación puede tener muchos segmentos (historial)
+            .HasForeignKey(s => s.RoomId)
+            .OnDelete(DeleteBehavior.Restrict); // No borrar habitación si tiene historial
+    });
 
-        foreach (var property in decimalProps)
-        {
-            property.SetPrecision(18);
-            property.SetScale(2);
-        }
-    }
+    // --- OTRAS CONFIGURACIONES EXISTENTES (MANTENER) ---
+    
+    modelBuilder.Entity<GuestFolio>().ToTable("GuestFolios");
+    modelBuilder.Entity<ExternalFolio>().ToTable("ExternalFolios");
+    
+    // (Asegúrate de borrar el bloque antiguo modelBuilder.Entity<Reservation>().HasOne(r => r.Room)...)
+}
 }
