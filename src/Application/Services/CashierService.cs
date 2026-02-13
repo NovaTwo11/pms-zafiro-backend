@@ -8,10 +8,12 @@ namespace PmsZafiro.Application.Services;
 public class CashierService
 {
     private readonly ICashierRepository _repository;
+    private readonly IProductRepository _productRepository;
 
-    public CashierService(ICashierRepository repository)
+    public CashierService(ICashierRepository repository, IProductRepository productRepository)
     {
         _repository = repository;
+        _productRepository = productRepository;
     }
 
     public async Task<bool> IsShiftOpenAsync(string userId)
@@ -45,6 +47,66 @@ public class CashierService
 
         await _repository.AddShiftAsync(shift);
         return MapToDto(shift);
+    }
+
+    // --- NUEVO MÉTODO: Ventas Directas (Walk-ins) ---
+    public async Task RegisterDirectSaleAsync(string userId, CreateDirectSaleDto dto)
+    {
+        var shift = await _repository.GetOpenShiftByUserIdAsync(userId);
+        if (shift == null) 
+            throw new InvalidOperationException("No hay turno abierto para registrar ventas.");
+
+        // 1. Registrar Cargos (Consumos) y Descontar Inventario
+        foreach (var item in dto.Items)
+        {
+            var charge = new FolioTransaction
+            {
+                Id = Guid.NewGuid(),
+                CashierShiftId = shift.Id,
+                Type = TransactionType.Charge,
+                Amount = item.UnitPrice * item.Quantity,
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                Description = item.Description,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedByUserId = userId,
+                FolioId = null, // Venta Directa (Sin huésped/Pasadía)
+                PaymentMethod = PaymentMethod.None
+            };
+            
+            await _repository.AddTransactionAsync(charge);
+
+            // Control de Stock
+            var product = await _productRepository.GetByIdAsync(item.ProductId);
+            if (product != null && product.IsStockTracked)
+            {
+                product.Stock -= item.Quantity;
+                if (product.Stock < 0) product.Stock = 0; // Prevenir negativos si no está permitido
+                await _productRepository.UpdateAsync(product);
+            }
+        }
+
+        // 2. Registrar el Pago (Ingreso Monetario)
+        var payment = new FolioTransaction
+        {
+            Id = Guid.NewGuid(),
+            CashierShiftId = shift.Id,
+            Type = TransactionType.Payment,
+            Amount = dto.TotalAmount,
+            Quantity = 1,
+            UnitPrice = dto.TotalAmount,
+            Description = $"Pago POS - Venta Directa Público General",
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedByUserId = userId,
+            FolioId = null, // Venta Directa
+            PaymentMethod = dto.PaymentMethod
+        };
+
+        await _repository.AddTransactionAsync(payment);
+
+        // 3. Actualizar la caja base del Turno
+        shift.SystemCalculatedAmount += dto.TotalAmount;
+        await _repository.UpdateShiftAsync(shift);
     }
 
     public async Task RegisterMovementAsync(string userId, CreateCashierMovementDto dto)
@@ -95,10 +157,10 @@ public class CashierService
         if (shift == null) return null;
 
         // Clasificación de Transacciones
-        var payments = shift.Transactions.Where(t => t.Type == TransactionType.Payment).ToList(); // Pagos Reservas
+        var payments = shift.Transactions.Where(t => t.Type == TransactionType.Payment).ToList(); // Pagos Reservas y Ventas Directas
         var incomes = shift.Transactions.Where(t => t.Type == TransactionType.Income).ToList();   // Ingresos Caja
         var expenses = shift.Transactions.Where(t => t.Type == TransactionType.Expense).ToList(); // Gastos Caja
-        var charges = shift.Transactions.Where(t => t.Type == TransactionType.Charge).ToList();   // Cargos Habitación
+        var charges = shift.Transactions.Where(t => t.Type == TransactionType.Charge).ToList();   // Cargos Habitación y POS
 
         // Totales
         var totalReservationsPayment = payments.Sum(t => t.Amount);

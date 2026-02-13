@@ -47,6 +47,33 @@ public class CashierController : ControllerBase
         var history = await _service.GetHistoryAsync();
         return Ok(history);
     }
+
+    // --- NUEVO ENDPOINT: Ventas Directas ---
+    [HttpPost("direct-sale")]
+    public async Task<ActionResult> RegisterDirectSale([FromBody] CreateDirectSaleDto dto)
+    {
+        try 
+        {
+            if (dto.TotalAmount < 0) 
+                return BadRequest(new { error = "El monto no puede ser negativo." });
+            
+            if ((int)dto.PaymentMethod < 1) 
+                return BadRequest(new { error = "Debe especificar un método de pago válido para la venta directa." });
+
+            await _service.RegisterDirectSaleAsync("user1", dto); // "user1" hardcoded temporalmente al igual que el resto
+            
+            return Ok(new { message = "Venta directa registrada exitosamente" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR CRÍTICO] RegisterDirectSale: {ex.Message}");
+            return StatusCode(500, new { error = "Error interno del servidor", details = ex.Message });
+        }
+    }
     
     [HttpPost("movement")]
     public async Task<ActionResult> RegisterMovement([FromBody] CreateCashierMovementDto dto)
