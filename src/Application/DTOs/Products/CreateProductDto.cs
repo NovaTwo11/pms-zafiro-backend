@@ -23,5 +23,6 @@ namespace PmsZafiro.Application.DTOs.Products
         public string Category { get; set; } = string.Empty;
         
         public string? ImageUrl { get; set; }
+        public bool IsStockTracked { get; set; }
     }
 }

@@ -29,8 +29,9 @@ namespace PmsZafiro.API.Controllers
                 UnitPrice = p.UnitPrice,
                 Stock = p.Stock,
                 Category = p.Category,
-                ImageUrl = p.ImageUrl, // <--- AGREGADO
+                ImageUrl = p.ImageUrl, 
                 IsActive = p.IsActive,
+                IsStockTracked = p.IsStockTracked,
                 CreatedAt = p.CreatedAt
             });
 
@@ -51,8 +52,9 @@ namespace PmsZafiro.API.Controllers
                 UnitPrice = p.UnitPrice,
                 Stock = p.Stock,
                 Category = p.Category,
-                ImageUrl = p.ImageUrl, // <--- AGREGADO
+                ImageUrl = p.ImageUrl, 
                 IsActive = p.IsActive,
+                IsStockTracked = p.IsStockTracked,
                 CreatedAt = p.CreatedAt
             };
 
@@ -70,7 +72,8 @@ namespace PmsZafiro.API.Controllers
                 UnitPrice = createDto.UnitPrice,
                 Stock = createDto.Stock,
                 Category = createDto.Category,
-                ImageUrl = createDto.ImageUrl // <--- AGREGADO
+                ImageUrl = createDto.ImageUrl,
+                IsStockTracked = createDto.IsStockTracked
             };
 
             var createdProduct = await _productRepository.AddAsync(product);
@@ -104,8 +107,9 @@ namespace PmsZafiro.API.Controllers
             existingProduct.UnitPrice = updateDto.UnitPrice;
             existingProduct.Stock = updateDto.Stock;
             existingProduct.Category = updateDto.Category;
-            existingProduct.ImageUrl = updateDto.ImageUrl; // <--- AGREGADO
+            existingProduct.ImageUrl = updateDto.ImageUrl;
             existingProduct.IsActive = updateDto.IsActive;
+            existingProduct.IsStockTracked = updateDto.IsStockTracked;
 
             await _productRepository.UpdateAsync(existingProduct);
 

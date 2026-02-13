@@ -24,4 +24,5 @@ public class CreateTransactionDto
     // Category es útil para reportes estadísticos, aunque no esté en la entidad Transaction, 
     // podrías guardarlo en Description o agregar el campo a la entidad.
     public string? Category { get; set; } 
+    public Guid? ProductId { get; set; }
 }

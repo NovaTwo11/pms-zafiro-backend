@@ -16,38 +16,39 @@ public class PmsDbContext : DbContext
     public DbSet<CashierShift> CashierShifts { get; set; }
     public DbSet<Product> Products { get; set; }
     public DbSet<ReservationSegment> ReservationSegments { get; set; }
+    
+    // NUEVO: Agregamos el DbSet para que reconozca la tabla de variaciones de precios
+    public DbSet<RoomPriceOverride> RoomPriceOverrides { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
-{
-    base.OnModelCreating(modelBuilder);
-
-    // --- CONFIGURACIÓN DE RESERVAS (NUEVA ARQUITECTURA) ---
-    
-    // 1. La Reserva ya no tiene RoomId directo. Tiene una colección de segmentos.
-    modelBuilder.Entity<Reservation>()
-        .HasMany(r => r.Segments)
-        .WithOne(s => s.Reservation)
-        .HasForeignKey(s => s.ReservationId)
-        .OnDelete(DeleteBehavior.Cascade); // Si borras la reserva, se borran los segmentos
-
-    // 2. Configuración del Segmento (La tabla intermedia que tiene el RoomId)
-    modelBuilder.Entity<ReservationSegment>(entity =>
     {
-        entity.ToTable("ReservationSegments");
-        entity.HasKey(s => s.Id);
+        base.OnModelCreating(modelBuilder);
 
-        // Relación Segmento -> Habitación
-        entity.HasOne(s => s.Room)
-            .WithMany() // Una habitación puede tener muchos segmentos (historial)
-            .HasForeignKey(s => s.RoomId)
-            .OnDelete(DeleteBehavior.Restrict); // No borrar habitación si tiene historial
-    });
+        // --- CONFIGURACIÓN DE RESERVAS (NUEVA ARQUITECTURA) ---
+        
+        // 1. La Reserva ya no tiene RoomId directo. Tiene una colección de segmentos.
+        modelBuilder.Entity<Reservation>()
+            .HasMany(r => r.Segments)
+            .WithOne(s => s.Reservation)
+            .HasForeignKey(s => s.ReservationId)
+            .OnDelete(DeleteBehavior.Cascade); // Si borras la reserva, se borran los segmentos
 
-    // --- OTRAS CONFIGURACIONES EXISTENTES (MANTENER) ---
-    
-    modelBuilder.Entity<GuestFolio>().ToTable("GuestFolios");
-    modelBuilder.Entity<ExternalFolio>().ToTable("ExternalFolios");
-    
-    // (Asegúrate de borrar el bloque antiguo modelBuilder.Entity<Reservation>().HasOne(r => r.Room)...)
-}
+        // 2. Configuración del Segmento (La tabla intermedia que tiene el RoomId)
+        modelBuilder.Entity<ReservationSegment>(entity =>
+        {
+            entity.ToTable("ReservationSegments");
+            entity.HasKey(s => s.Id);
+
+            // Relación Segmento -> Habitación
+            entity.HasOne(s => s.Room)
+                .WithMany() // Una habitación puede tener muchos segmentos (historial)
+                .HasForeignKey(s => s.RoomId)
+                .OnDelete(DeleteBehavior.Restrict); // No borrar habitación si tiene historial
+        });
+
+        // --- OTRAS CONFIGURACIONES EXISTENTES (MANTENER) ---
+        
+        modelBuilder.Entity<GuestFolio>().ToTable("GuestFolios");
+        modelBuilder.Entity<ExternalFolio>().ToTable("ExternalFolios");
+    }
 }

@@ -13,13 +13,15 @@ public class FoliosController : ControllerBase
 {
     private readonly IFolioRepository _repository;
     private readonly CashierService _cashierService;
+    private readonly IProductRepository _productRepository;
 
-    public FoliosController(IFolioRepository repository, CashierService cashierService)
+    public FoliosController(IFolioRepository repository, CashierService cashierService, IProductRepository productRepository)
     {
         _repository = repository;
         _cashierService = cashierService;
+        _productRepository = productRepository;
     }
-
+    
     [HttpGet("active-guests")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
@@ -177,6 +179,19 @@ public class FoliosController : ControllerBase
         };
 
         await _repository.AddTransactionAsync(transaction);
+        
+        if (dto.ProductId.HasValue && dto.Type == TransactionType.Charge)
+        {
+            var product = await _productRepository.GetByIdAsync(dto.ProductId.Value);
+            if (product != null && product.IsStockTracked)
+            {
+                product.Stock -= dto.Quantity;
+                // Si permites vender en negativo, omite la siguiente línea. Si no, déjala:
+                if (product.Stock < 0) product.Stock = 0; 
+
+                await _productRepository.UpdateAsync(product);
+            }
+        }
 
         return Ok(new { message = "Transacción registrada correctamente", transactionId = transaction.Id });
     }

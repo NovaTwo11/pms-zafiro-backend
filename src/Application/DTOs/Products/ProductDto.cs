@@ -13,6 +13,7 @@ namespace PmsZafiro.Application.DTOs.Products
         
         public string? ImageUrl { get; set; }
         public bool IsActive { get; set; }
+        public bool IsStockTracked { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 }
