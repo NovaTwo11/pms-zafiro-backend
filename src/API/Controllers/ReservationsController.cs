@@ -36,38 +36,13 @@ public class ReservationsController : ControllerBase
         _context = context;
     }
 
+    // --- GET ACTUALIZADO: Usa la lógica financiera real ---
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReservationDto>>> GetAll()
     {
-        var reservations = await _context.Reservations
-            .Include(r => r.Guest)
-            .Include(r => r.Segments)
-            .ThenInclude(s => s.Room)
-            .AsNoTracking()
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
-
-        var dtos = reservations.Select(r => new ReservationDto
-        {
-            Id = r.Id,
-            Code = r.ConfirmationCode,
-            Status = r.Status.ToString(),
-            MainGuestId = r.GuestId,
-            MainGuestName = r.Guest != null ? r.Guest.FullName : "Sin Nombre",
-            CheckIn = r.CheckIn,
-            CheckOut = r.CheckOut,
-            Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
-            TotalAmount = r.TotalAmount,
-            Segments = r.Segments.Select(s => new ReservationSegmentDto
-            {
-                RoomId = s.RoomId,
-                RoomNumber = s.Room?.Number ?? "?",
-                Start = s.CheckIn,
-                End = s.CheckOut
-            }).ToList()
-        });
-        
-        return Ok(dtos);
+        // Usamos el nuevo método del repositorio que calcula Balance y Pagado
+        var reservations = await _repository.GetReservationsWithLiveBalanceAsync();
+        return Ok(reservations);
     }
 
     [HttpGet("{id}")]
@@ -270,14 +245,9 @@ public class ReservationsController : ControllerBase
         return Ok(new { message = "Información del huésped actualizada correctamente." });
     }
 
-    // ==========================================
-    // MÉTODO REFACTORIZADO Y CORREGIDO
-    // ==========================================
     [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
-        // 1. Obtener Datos de Reserva
-        // Usamos AsNoTracking inicialmente para lectura rápida y segura
         var reservation = await _context.Reservations
             .Include(r => r.Segments)
             .FirstOrDefaultAsync(r => r.Id == id);
@@ -288,7 +258,6 @@ public class ReservationsController : ControllerBase
         if (reservation.Status == ReservationStatus.CheckedOut)
             return BadRequest(new { message = "La reserva ya se encuentra en estado Checked-out." });
 
-        // 2. Obtener el ID del Folio (Sin cargar transacciones en memoria)
         var folioInfo = await _context.Folios
             .OfType<GuestFolio>()
             .AsNoTracking()
@@ -299,8 +268,7 @@ public class ReservationsController : ControllerBase
         if (folioInfo == null) 
             return BadRequest(new { message = "No se encontró el folio asociado a la reserva." });
 
-        // 3. Validación de Deuda contra la Base de Datos (Evita datos 'stale' en memoria)
-        // NOTA: Requiere haber agregado GetFolioBalanceAsync en IFolioRepository
+        // Validación de Deuda contra la Base de Datos (Source of Truth)
         var currentBalance = await _folioRepository.GetFolioBalanceAsync(folioInfo.Id);
         
         decimal toleranceMargin = 100m; 
@@ -316,15 +284,12 @@ public class ReservationsController : ControllerBase
             });
         }
 
-        // 4. Inicio de Transacción para asegurar consistencia
         using var transaction = await _context.Database.BeginTransactionAsync();
 
         try
         {
-            // Adjuntamos la reserva al contexto para seguimiento de cambios
             _context.Reservations.Attach(reservation);
 
-            // A. Manejo de Salida Anticipada (Early Departure)
             var today = DateTime.UtcNow.Date;
             if (reservation.CheckOut.Date > today)
             {
@@ -337,13 +302,11 @@ public class ReservationsController : ControllerBase
                 var currentSegment = reservation.Segments
                     .FirstOrDefault(s => s.CheckIn.Date <= today && s.CheckOut.Date >= today);
 
-                // Eliminar segmentos futuros
                 if (futureSegments.Any())
                 {
                     _context.Set<ReservationSegment>().RemoveRange(futureSegments);
                 }
 
-                // Ajustar fecha fin del segmento actual
                 if (currentSegment != null)
                 {
                     currentSegment.CheckOut = DateTime.UtcNow;
@@ -351,15 +314,12 @@ public class ReservationsController : ControllerBase
                 }
             }
 
-            // B. Actualizar Estados
             reservation.Status = ReservationStatus.CheckedOut;
             
-            // Actualización ligera del Folio (Stub Pattern)
             var folioStub = new GuestFolio { Id = folioInfo.Id, Status = FolioStatus.Closed };
             _context.Folios.Attach(folioStub);
             _context.Entry(folioStub).Property(f => f.Status).IsModified = true;
 
-            // C. Liberación de Habitación (Housekeeping)
             var lastOccupiedSegment = reservation.Segments
                 .OrderByDescending(s => s.CheckOut)
                 .FirstOrDefault(s => s.CheckIn.Date <= DateTime.UtcNow.Date);
@@ -372,16 +332,14 @@ public class ReservationsController : ControllerBase
                 if (room != null)
                 {
                     room.Status = RoomStatus.Dirty; 
-                    await _roomRepository.UpdateAsync(room); // UpdateAsync suele hacer SaveChanges interno, cuidado con la transacción
+                    await _roomRepository.UpdateAsync(room); 
                     roomNumberReleased = room.Number;
                 }
             }
 
-            // Guardar todo y Commit
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
 
-            // Notificación (Fuera de la transacción crítica)
             await _notificationRepository.AddAsync(
                 "Check-out Completado",
                 $"Salida registrada para reserva {reservation.ConfirmationCode}. Habitación {(roomNumberReleased ?? "N/A")} marcada como Sucia.",

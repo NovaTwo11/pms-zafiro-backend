@@ -22,63 +22,74 @@ public class SeedController : ControllerBase
     public async Task<IActionResult> Initialize()
     {
         // 1. Limpieza de Base de Datos
-        // Usamos ExecuteSqlRawAsync para las tablas con herencia (TPT) donde ExecuteDelete falla.
-        
         // Primero borramos transacciones (Hijos)
         await _context.FolioTransactions.ExecuteDeleteAsync();
 
         // FIX: Borrado manual de jerarquía TPT (Hijos primero, luego Padre)
-        // Nota: Si tus tablas tienen nombres diferentes en BD, ajústalos aquí. 
-        // Basado en tu DbContext: GuestFolios, ExternalFolios, Folios.
         await _context.Database.ExecuteSqlRawAsync("DELETE FROM GuestFolios"); 
         await _context.Database.ExecuteSqlRawAsync("DELETE FROM ExternalFolios");
         await _context.Database.ExecuteSqlRawAsync("DELETE FROM Folios");
 
-        // El resto de entidades simples sí soportan ExecuteDeleteAsync
+        // El resto de entidades simples
         await _context.ReservationSegments.ExecuteDeleteAsync();
         await _context.Reservations.ExecuteDeleteAsync();
         await _context.Products.ExecuteDeleteAsync();
         await _context.Rooms.ExecuteDeleteAsync();
         await _context.Guests.ExecuteDeleteAsync();
         
-        // Limpieza de caja (si aplica)
+        // Limpieza de caja
         await _context.CashierShifts.ExecuteDeleteAsync();
 
         // 2. Crear Datos Maestros
+        
+        // CREAR TURNO SISTEMA (Importante para que las transacciones históricas tengan FK válida)
+        var systemShift = new CashierShift
+        {
+            Id = Guid.NewGuid(),
+            UserId = "system",
+            OpenedAt = DateTime.UtcNow.AddYears(-1),
+            ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
+            StartingAmount = 0, // CORREGIDO: Antes era InitialAmount
+            Status = CashierShiftStatus.Closed
+        };
+        await _context.CashierShifts.AddAsync(systemShift);
+        await _context.SaveChangesAsync();
+
         var rooms = await CreateRooms();
         var guests = await CreateGuests();
         var products = await CreateProducts();
 
         // 3. Generar Escenarios
-        await CreateHistoricalReservations(rooms, guests, products);
-        await CreateActiveReservations(rooms, guests, products);
+        await CreateHistoricalReservations(rooms, guests, products, systemShift.Id);
+        await CreateActiveReservations(rooms, guests, products, systemShift.Id);
         await CreateFutureReservations(rooms, guests);
         await CreateSplitStayReservation(rooms, guests[0]);
 
         return Ok(new { message = "Base de datos reiniciada y poblada correctamente." });
     }
 
-    // --- MÉTODOS DE GENERACIÓN (Sin cambios lógicos, solo asegurando nombres correctos) ---
+    // --- MÉTODOS DE GENERACIÓN ---
 
     private async Task<List<Room>> CreateRooms()
     {
         var rooms = new List<Room>();
-        var types = new[] { "Sencilla", "Doble", "Suite", "Familiar" };
-        var prices = new[] { 150000m, 220000m, 350000m, 280000m };
+        // Usamos strings porque tu entidad Room tiene 'public string Category'
+        var categories = new[] { "Sencilla", "Doble", "Familiar", "Suite Familiar" }; 
+        var prices = new[] { 150000m, 220000m, 280000m, 350000m };
 
         for (int floor = 1; floor <= 3; floor++)
         {
             for (int num = 1; num <= 10; num++)
             {
-                var typeIndex = _random.Next(types.Length);
+                var typeIndex = _random.Next(categories.Length);
                 var room = new Room
                 {
                     Id = Guid.NewGuid(),
                     Number = $"{floor}{num:00}",
                     Floor = floor,
-                    Category = types[typeIndex],
+                    Category = categories[typeIndex], // CORREGIDO: Antes era Type
                     BasePrice = prices[typeIndex],
-                    Status = RoomStatus.Available // Asegúrate que tu Enum tenga Clean o Available
+                    Status = RoomStatus.Available 
                 };
                 rooms.Add(room);
             }
@@ -91,8 +102,8 @@ public class SeedController : ControllerBase
     private async Task<List<Guest>> CreateGuests()
     {
         var guests = new List<Guest>();
-        var names = new[] { "Juan", "Maria", "Carlos", "Ana", "Pedro", "Sofia" };
-        var lastNames = new[] { "Perez", "Gomez", "Rodriguez", "Lopez" };
+        var names = new[] { "Juan", "Maria", "Carlos", "Ana", "Pedro", "Sofia", "Luis", "Elena" };
+        var lastNames = new[] { "Perez", "Gomez", "Rodriguez", "Lopez", "Martinez", "Sanchez" };
 
         for (int i = 0; i < 50; i++)
         {
@@ -118,17 +129,17 @@ public class SeedController : ControllerBase
     {
         var products = new List<Product>
         {
-            // Ojo: Usamos UnitPrice porque así está en tu entidad Product
-            new() { Name = "Coca Cola", UnitPrice = 5000, Category = "Minibar", Stock = 100 },
-            new() { Name = "Agua", UnitPrice = 4000, Category = "Minibar", Stock = 100 },
-            new() { Name = "Lavandería", UnitPrice = 25000, Category = "Servicios", Stock = 999 }
+            new() { Id = Guid.NewGuid(), Name = "Coca Cola", UnitPrice = 5000, Category = "Minibar", Stock = 100 },
+            new() { Id = Guid.NewGuid(), Name = "Agua", UnitPrice = 4000, Category = "Minibar", Stock = 100 },
+            new() { Id = Guid.NewGuid(), Name = "Cerveza", UnitPrice = 8000, Category = "Minibar", Stock = 100 },
+            new() { Id = Guid.NewGuid(), Name = "Lavandería Express", UnitPrice = 25000, Category = "Servicios", Stock = 999 }
         };
         await _context.Products.AddRangeAsync(products);
         await _context.SaveChangesAsync();
         return products;
     }
 
-    private async Task CreateHistoricalReservations(List<Room> rooms, List<Guest> guests, List<Product> products)
+    private async Task CreateHistoricalReservations(List<Room> rooms, List<Guest> guests, List<Product> products, Guid shiftId)
     {
         for (int i = 0; i < 30; i++)
         {
@@ -137,11 +148,11 @@ public class SeedController : ControllerBase
             var checkIn = DateTime.UtcNow.Date.AddDays(-_random.Next(10, 60));
             var checkOut = checkIn.AddDays(_random.Next(1, 4));
 
-            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedOut, products, true);
+            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedOut, products, true, shiftId);
         }
     }
 
-    private async Task CreateActiveReservations(List<Room> rooms, List<Guest> guests, List<Product> products)
+    private async Task CreateActiveReservations(List<Room> rooms, List<Guest> guests, List<Product> products, Guid shiftId)
     {
         var activeRooms = rooms.Take(5).ToList();
         foreach (var room in activeRooms)
@@ -150,7 +161,7 @@ public class SeedController : ControllerBase
             var checkIn = DateTime.UtcNow.Date.AddDays(-1);
             var checkOut = checkIn.AddDays(3);
 
-            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedIn, products, false);
+            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedIn, products, false, shiftId);
             
             room.Status = RoomStatus.Occupied;
             _context.Rooms.Update(room);
@@ -179,7 +190,6 @@ public class SeedController : ControllerBase
                 CreatedAt = DateTimeOffset.UtcNow
             };
             
-            // Segmento único
             res.Segments.Add(new ReservationSegment
             {
                 Id = Guid.NewGuid(),
@@ -196,8 +206,9 @@ public class SeedController : ControllerBase
 
     private async Task CreateSplitStayReservation(List<Room> rooms, Guest guest)
     {
-        var room1 = rooms.First(r => r.Number == "101");
-        var room2 = rooms.First(r => r.Number == "102");
+        // Buscamos habitaciones por índice para asegurar que existan
+        var room1 = rooms[0];
+        var room2 = rooms[1];
         
         var checkIn = DateTime.UtcNow.Date.AddDays(2);
         var moveDate = checkIn.AddDays(2);
@@ -216,14 +227,14 @@ public class SeedController : ControllerBase
             CreatedAt = DateTimeOffset.UtcNow
         };
 
-        res.Segments.Add(new ReservationSegment { RoomId = room1.Id, CheckIn = checkIn, CheckOut = moveDate });
-        res.Segments.Add(new ReservationSegment { RoomId = room2.Id, CheckIn = moveDate, CheckOut = checkOut });
+        res.Segments.Add(new ReservationSegment { Id=Guid.NewGuid(), RoomId = room1.Id, CheckIn = checkIn, CheckOut = moveDate });
+        res.Segments.Add(new ReservationSegment { Id=Guid.NewGuid(), RoomId = room2.Id, CheckIn = moveDate, CheckOut = checkOut });
 
         await _context.Reservations.AddAsync(res);
         await _context.SaveChangesAsync();
     }
 
-    private async Task CreateFullReservationFlow(Room room, Guest guest, DateTime checkIn, DateTime checkOut, ReservationStatus status, List<Product> products, bool isFinished)
+    private async Task CreateFullReservationFlow(Room room, Guest guest, DateTime checkIn, DateTime checkOut, ReservationStatus status, List<Product> products, bool isFinished, Guid shiftId)
     {
         var nights = (checkOut - checkIn).Days;
         var total = room.BasePrice * nights;
@@ -262,10 +273,12 @@ public class SeedController : ControllerBase
 
         await _context.FolioTransactions.AddAsync(new FolioTransaction
         {
+            Id = Guid.NewGuid(),
             FolioId = folio.Id,
             Amount = total,
             Description = "Hospedaje",
             Type = TransactionType.Charge,
+            CashierShiftId = shiftId, // IMPORTANTE: Asignamos el turno dummy
             CreatedAt = checkIn
         });
 
@@ -274,12 +287,14 @@ public class SeedController : ControllerBase
             var p = products[0];
             await _context.FolioTransactions.AddAsync(new FolioTransaction
             {
+                Id = Guid.NewGuid(),
                 FolioId = folio.Id,
                 Amount = p.UnitPrice,
                 Description = $"Consumo {p.Name}",
                 Type = TransactionType.Charge,
                 Quantity = 1,
                 UnitPrice = p.UnitPrice,
+                CashierShiftId = shiftId,
                 CreatedAt = checkIn.AddHours(1)
             });
         }
@@ -288,11 +303,13 @@ public class SeedController : ControllerBase
         {
             await _context.FolioTransactions.AddAsync(new FolioTransaction
             {
+                Id = Guid.NewGuid(),
                 FolioId = folio.Id,
-                Amount = res.TotalAmount,
+                Amount = res.TotalAmount, 
                 Description = "Pago Total",
                 Type = TransactionType.Payment,
                 PaymentMethod = PaymentMethod.CreditCard,
+                CashierShiftId = shiftId,
                 CreatedAt = checkOut
             });
         }

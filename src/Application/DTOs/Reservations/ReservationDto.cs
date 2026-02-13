@@ -9,20 +9,16 @@ public class ReservationDto
     public Guid MainGuestId { get; set; }
     public string MainGuestName { get; set; } = string.Empty;
     
-    // Datos globales
     public DateTime CheckIn { get; set; }
     public DateTime CheckOut { get; set; }
     public int Nights { get; set; }
+    
     public decimal TotalAmount { get; set; }
     
-    // ✅ Nueva Lista de Segmentos
-    public List<ReservationSegmentDto> Segments { get; set; } = new();
-}
+    // --- NUEVOS CAMPOS PARA EL CRONOGRAMA ---
+    public decimal PaidAmount { get; set; } // Lo pagado realmente en caja
+    public decimal Balance { get; set; }    // La deuda real (puede ser 0 aunque TotalAmount sea > 0)
+    // ----------------------------------------
 
-public class ReservationSegmentDto
-{
-    public Guid RoomId { get; set; }
-    public string RoomNumber { get; set; } = string.Empty;
-    public DateTime Start { get; set; }
-    public DateTime End { get; set; }
+    public List<ReservationSegmentDto> Segments { get; set; } = new();
 }

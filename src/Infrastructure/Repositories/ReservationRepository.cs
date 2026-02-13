@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PmsZafiro.Application.DTOs.Reservations;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
 using PmsZafiro.Domain.Enums;
@@ -17,12 +18,58 @@ public class ReservationRepository : IReservationRepository
 
     public async Task<IEnumerable<Reservation>> GetAllAsync()
     {
-        // REFACTORIZADO: Incluir Segmentos -> Room
         return await _context.Reservations
             .Include(r => r.Guest)
             .Include(r => r.Segments).ThenInclude(s => s.Room)
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync();
+    }
+
+    // --- NUEVO MÉTODO: Trae reservas + Saldo Real calculado en SQL ---
+    public async Task<IEnumerable<ReservationDto>> GetReservationsWithLiveBalanceAsync()
+    {
+        var query = from r in _context.Reservations.AsNoTracking()
+                    join g in _context.Guests on r.GuestId equals g.Id
+                    // Left Join para traer el Folio si existe
+                    join f in _context.Folios.OfType<GuestFolio>() on r.Id equals f.ReservationId into folioGroup
+                    from folio in folioGroup.DefaultIfEmpty()
+                    
+                    orderby r.CreatedAt descending
+                    select new ReservationDto
+                    {
+                        Id = r.Id,
+                        Code = r.ConfirmationCode,
+                        Status = r.Status.ToString(),
+                        MainGuestId = r.GuestId,
+                        MainGuestName = g.FirstName + " " + g.LastName,
+                        CheckIn = r.CheckIn,
+                        CheckOut = r.CheckOut,
+                        // Cálculo seguro de noches
+                        Nights = EF.Functions.DateDiffDay(r.CheckIn, r.CheckOut) == 0 ? 1 : EF.Functions.DateDiffDay(r.CheckIn, r.CheckOut),
+                        TotalAmount = r.TotalAmount,
+
+                        // 1. Calcular Saldo Real (Debe - Haber)
+                        // Si no hay folio, asumimos deuda 0 o TotalAmount según prefieras (aquí pongo 0 si no hay checkin)
+                        Balance = folio != null ? folio.Transactions.Sum(t => 
+                            (t.Type == TransactionType.Charge || t.Type == TransactionType.Expense) ? t.Amount : 
+                            (t.Type == TransactionType.Payment || t.Type == TransactionType.Income) ? -t.Amount : 0) : 0,
+
+                        // 2. Calcular Total Pagado
+                        PaidAmount = folio != null ? folio.Transactions
+                            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+                            .Sum(t => t.Amount) : 0,
+
+                        // Mapeo de Segmentos
+                        Segments = r.Segments.Select(s => new ReservationSegmentDto 
+                        {
+                            RoomId = s.RoomId,
+                            RoomNumber = s.Room.Number,
+                            Start = s.CheckIn,
+                            End = s.CheckOut
+                        }).ToList()
+                    };
+
+        return await query.ToListAsync();
     }
 
     public async Task<Reservation?> GetByIdAsync(Guid id)
@@ -54,7 +101,6 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.ConfirmationCode == code);
     }
 
-    // --- LÓGICA DE CHECK-OUT TRANSACCIONAL ---
     public async Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
@@ -64,13 +110,9 @@ public class ReservationRepository : IReservationRepository
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 1. Actualizar Reserva
                 _context.Reservations.Update(reservation);
-                
-                // 2. Actualizar Folio
                 _context.Folios.Update(folio);
 
-                // 3. Actualizar Habitación (si existe, pasada por el Controller)
                 if (room != null)
                 {
                     _context.Rooms.Update(room);
@@ -89,8 +131,6 @@ public class ReservationRepository : IReservationRepository
 
     public async Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId)
     {
-        // REFACTORIZADO: Buscar si ALGÚN segmento de la reserva usa esa habitación
-        // y la reserva está activa.
         return await _context.Reservations
             .Include(r => r.Segments)
             .Where(r => r.Segments.Any(s => s.RoomId == roomId) &&
@@ -107,13 +147,8 @@ public class ReservationRepository : IReservationRepository
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 1. Actualizar Reserva
                 _context.Reservations.Update(reservation);
-            
-                // 2. Actualizar Habitación (Pasada por el controller, derivada del primer segmento)
                 _context.Rooms.Update(room);
-
-                // 3. Crear Folio
                 await _context.Folios.AddAsync(newFolio);
 
                 await _context.SaveChangesAsync();

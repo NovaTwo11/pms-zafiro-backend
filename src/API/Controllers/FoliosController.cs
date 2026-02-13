@@ -23,12 +23,16 @@ public class FoliosController : ControllerBase
     [HttpGet("active-guests")]
     public async Task<ActionResult<IEnumerable<object>>> GetActiveGuests()
     {
+        // 1. Traer datos
         var folios = await _repository.GetActiveGuestFoliosAsync();
-    
-        var result = folios.Select(f => {
-            var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
-            var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
-        
+        var result = new List<object>();
+
+        // 2. Iteración SECUENCIAL (Fix para evitar error de concurrencia de DbContext)
+        foreach (var f in folios)
+        {
+            // Consulta segura al repo (una por una)
+            var dbBalance = await _repository.GetFolioBalanceAsync(f.Id);
+
             var nights = 0;
             string roomNumber = "?";
             DateTime? checkIn = null;
@@ -44,28 +48,32 @@ public class FoliosController : ControllerBase
                 nights = (f.Reservation.CheckOut - f.Reservation.CheckIn).Days;
                 if (nights < 1) nights = 1;
 
-                // Lógica Split Stays: Buscar el segmento activo HOY o el primero
-                var activeSegment = f.Reservation.Segments
-                                        .OrderBy(s => s.CheckIn)
-                                        .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
-                                    ?? f.Reservation.Segments.FirstOrDefault();
+                // Null safety para segmentos
+                var segments = f.Reservation.Segments;
+                if (segments != null && segments.Any())
+                {
+                    var activeSegment = segments
+                                            .OrderBy(s => s.CheckIn)
+                                            .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
+                                        ?? segments.FirstOrDefault();
 
-                roomNumber = activeSegment?.Room?.Number ?? "?";
+                    roomNumber = activeSegment?.Room?.Number ?? "?";
+                }
             }
-        
-            return new 
+
+            result.Add(new 
             {
                 Id = f.Id,
                 Type = "guest",
                 Status = f.Status.ToString(),
-                Balance = charges - payments,
+                Balance = dbBalance, 
                 GuestName = guestName,
                 RoomNumber = roomNumber,
                 CheckIn = checkIn,
                 CheckOut = checkOut,
                 Nights = nights
-            };
-        });
+            });
+        }
     
         return Ok(result);
     }
@@ -75,21 +83,24 @@ public class FoliosController : ControllerBase
     {
         var allFolios = await _repository.GetAllAsync(); 
         var externals = allFolios.OfType<ExternalFolio>().Where(f => f.Status == FolioStatus.Open).ToList();
-        
-        var result = externals.Select(f => {
-            var charges = f.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
-            var payments = f.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
-            return new 
+        var result = new List<object>();
+
+        // Fix Concurrencia aquí también
+        foreach (var f in externals)
+        {
+            var dbBalance = await _repository.GetFolioBalanceAsync(f.Id);
+            result.Add(new 
             {
                 Id = f.Id,
                 Type = "external",
                 Status = f.Status.ToString(),
-                Balance = charges - payments,
+                Balance = dbBalance,
                 Alias = f.Alias ?? "Cliente Externo",
                 Description = f.Description,
                 CreatedAt = f.CreatedAt
-            };
-        });
+            });
+        }
+        
         return Ok(result);
     }
 
@@ -115,15 +126,13 @@ public class FoliosController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = folio.Id }, new { id = folio.Id, message = "Folio externo creado" });
     }
 
-    // --- MÉTODO CLAVE PARA REPORTES ---
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
         // 1. Obtener usuario actual
         string currentUserId = "user1"; 
 
-        // 2. Buscar turno abierto (CRÍTICO)
-        // Cualquier movimiento financiero debe quedar auditado en el turno actual.
+        // 2. Buscar turno abierto
         var openShift = await _cashierService.GetOpenShiftEntityAsync(currentUserId);
     
         if (openShift == null)
@@ -134,37 +143,39 @@ public class FoliosController : ControllerBase
             });
         }
 
-        var folio = await _repository.GetByIdAsync(id);
-        if (folio == null) return NotFound("El folio no existe.");
-        if (dto.Type == TransactionType.Payment && (int)dto.PaymentMethod < 1)
+        // VALIDACIÓN ANTI-ERROR CONTABLE
+        if (dto.Amount < 0 && dto.Type != TransactionType.Charge)
         {
-            return BadRequest("Para registrar un pago debe especificar un método de pago válido (Efectivo, Tarjeta, etc).");
+             return BadRequest(new { 
+                error = "Operación Inválida", 
+                message = "Solo los Cargos pueden tener valor negativo (para correcciones). Los Pagos deben ser positivos." 
+            });
         }
 
-        // 3. Crear la transacción vinculada al turno
+        var folio = await _repository.GetByIdAsync(id);
+        if (folio == null) return NotFound("El folio no existe.");
+        
+        if (dto.Type == TransactionType.Payment && (int)dto.PaymentMethod < 1)
+        {
+            return BadRequest("Para registrar un pago debe especificar un método de pago válido.");
+        }
+
+        // 3. Crear la transacción
         var transaction = new FolioTransaction
         {
             Id = Guid.NewGuid(),
             FolioId = id,
-            
             Amount = dto.Amount,
             Description = dto.Description,
             Type = dto.Type, 
             Quantity = dto.Quantity > 0 ? dto.Quantity : 1,
-            UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : dto.Amount,
-            
-            
-            // Si es un Cargo (consumo), el método de pago es None (0).
-            // Si es un Pago (abono), respetamos lo que viene del front (1, 2, 4...).
+            UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : (dto.Amount < 0 ? -dto.Amount : dto.Amount),
             PaymentMethod = dto.Type == TransactionType.Charge ? PaymentMethod.None : dto.PaymentMethod,        
-            // ¡ESTO ES LO QUE HACE QUE EL REPORTE FUNCIONE!
-            CashierShiftId = openShift.Id, 
-        
+            CashierShiftId = openShift.Id,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedByUserId = currentUserId
         };
 
-        // Guardamos usando el método del repositorio que maneja la transacción
         await _repository.AddTransactionAsync(transaction);
 
         return Ok(new { message = "Transacción registrada correctamente", transactionId = transaction.Id });
@@ -203,15 +214,15 @@ public class FoliosController : ControllerBase
             dto.FolioType = "guest";
             dto.ReservationId = guestFolio.ReservationId;
             
-            // --- FIX PARA SPLIT STAYS ---
-            // Intentamos obtener el segmento actual (hoy) o el primero si es futuro/pasado
-            var activeSegment = guestFolio.Reservation.Segments
-                .OrderBy(s => s.CheckIn)
-                .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
-                ?? guestFolio.Reservation.Segments.FirstOrDefault();
+            var segments = guestFolio.Reservation.Segments;
+            var activeSegment = (segments != null && segments.Any())
+                ? segments.OrderBy(s => s.CheckIn)
+                          .FirstOrDefault(s => s.CheckIn <= DateTime.UtcNow && s.CheckOut > DateTime.UtcNow) 
+                  ?? segments.FirstOrDefault()
+                : null;
 
             dto.GuestName = guestFolio.Reservation.Guest?.FullName ?? "Huésped";
-            dto.RoomNumber = activeSegment?.Room?.Number ?? "N/A"; // Tomamos el número del segmento
+            dto.RoomNumber = activeSegment?.Room?.Number ?? "N/A"; 
             dto.CheckIn = guestFolio.Reservation.CheckIn;
             dto.CheckOut = guestFolio.Reservation.CheckOut;
             
