@@ -10,7 +10,11 @@ public interface IFolioRepository
     
     Task AddAsync(Folio folio);
     Task AddTransactionAsync(FolioTransaction transaction);
-    Task UpdateAsync(Folio folio); // <--- CRÍTICO para el Checkout
+    Task UpdateAsync(Folio folio);
+    
+    // --- NUEVO MÉTODO CRÍTICO ---
+    // Obtiene el saldo calculándolo directamente en la DB para evitar caché de EF Core
+    Task<decimal> GetFolioBalanceAsync(Guid folioId);
     
     Task<IEnumerable<GuestFolio>> GetActiveGuestFoliosAsync();
     Task<IEnumerable<ExternalFolio>> GetActiveExternalFoliosAsync();

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Application.DTOs.Reservations;
-using PmsZafiro.Application.DTOs.Guests; // Importante para el UpdateGuestInfo
+using PmsZafiro.Application.DTOs.Guests;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
 using PmsZafiro.Domain.Enums;
@@ -18,7 +18,7 @@ public class ReservationsController : ControllerBase
     private readonly IRoomRepository _roomRepository;
     private readonly INotificationRepository _notificationRepository;
     private readonly IGuestRepository _guestRepository;
-    private readonly PmsDbContext _context; // Necesario para consultas complejas con segmentos
+    private readonly PmsDbContext _context; 
 
     public ReservationsController(
         IReservationRepository repository,
@@ -39,7 +39,6 @@ public class ReservationsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReservationDto>>> GetAll()
     {
-        // Incluimos los Segmentos y la Habitación de cada segmento
         var reservations = await _context.Reservations
             .Include(r => r.Guest)
             .Include(r => r.Segments)
@@ -59,7 +58,6 @@ public class ReservationsController : ControllerBase
             CheckOut = r.CheckOut,
             Nights = (r.CheckOut - r.CheckIn).Days == 0 ? 1 : (r.CheckOut - r.CheckIn).Days,
             TotalAmount = r.TotalAmount,
-            // Mapeo de segmentos para el frontend
             Segments = r.Segments.Select(s => new ReservationSegmentDto
             {
                 RoomId = s.RoomId,
@@ -75,16 +73,12 @@ public class ReservationsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ReservationDto>> GetById(Guid id)
     {
-        // Usamos el contexto aquí también para asegurar traer los segmentos
         var r = await _context.Reservations
             .Include(x => x.Guest)
             .Include(x => x.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (r == null) return NotFound();
-
-        // Obtenemos la habitación actual o la primera para mostrar en cabecera
-        var currentSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
 
         var dto = new ReservationDto
         {
@@ -111,7 +105,6 @@ public class ReservationsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
-        // Lógica adaptada para crear el primer segmento automáticamente
         var reservation = new Reservation
         {
             GuestId = dto.MainGuestId,
@@ -122,7 +115,6 @@ public class ReservationsController : ControllerBase
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
         };
 
-        // Crear el segmento inicial
         var segment = new ReservationSegment
         {
             RoomId = dto.RoomId,
@@ -172,7 +164,6 @@ public class ReservationsController : ControllerBase
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
         };
 
-        // Segmento inicial
         reservation.Segments.Add(new ReservationSegment
         {
             RoomId = dto.RoomId,
@@ -195,7 +186,6 @@ public class ReservationsController : ControllerBase
     [HttpPost("{id}/checkin")]
     public async Task<IActionResult> CheckIn(Guid id)
     {
-        // 1. Obtener datos con relaciones (incluyendo segmentos)
         var reservation = await _context.Reservations
             .Include(r => r.Guest)
             .Include(r => r.Segments)
@@ -203,11 +193,9 @@ public class ReservationsController : ControllerBase
             
         if (reservation == null) return NotFound("Reserva no encontrada");
 
-        // 2. Validaciones de Estado
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest($"La reserva está en estado {reservation.Status}, no se puede hacer Check-in.");
 
-        // 3. Determinar qué habitación se ocupa (Primer segmento)
         var firstSegment = reservation.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
         if (firstSegment == null) return BadRequest("La reserva no tiene habitación asignada (segmentos).");
 
@@ -217,13 +205,11 @@ public class ReservationsController : ControllerBase
         if (room.Status == RoomStatus.Maintenance || room.Status == RoomStatus.Blocked)
             return BadRequest($"La habitación {room.Number} está en {room.Status} y no puede ocuparse.");
 
-        // 4. Preparar Cambios
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckIn = DateTime.UtcNow; 
         
         room.Status = RoomStatus.Occupied;
 
-        // 5. Preparar Folio
         var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
         if (existingFolio != null) 
             return BadRequest("Ya existe un folio para esta reserva.");
@@ -235,7 +221,6 @@ public class ReservationsController : ControllerBase
             CreatedAt = DateTimeOffset.UtcNow
         };
 
-        // 6. Ejecución
         try 
         {
             await _repository.ProcessCheckInAsync(reservation, room, folio);
@@ -285,108 +270,134 @@ public class ReservationsController : ControllerBase
         return Ok(new { message = "Información del huésped actualizada correctamente." });
     }
 
+    // ==========================================
+    // MÉTODO REFACTORIZADO Y CORREGIDO
+    // ==========================================
     [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
-        // 1. Obtener Datos: Incluimos Segmentos y Folio para tomar decisiones
+        // 1. Obtener Datos de Reserva
+        // Usamos AsNoTracking inicialmente para lectura rápida y segura
         var reservation = await _context.Reservations
             .Include(r => r.Segments)
             .FirstOrDefaultAsync(r => r.Id == id);
             
-        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+        if (reservation == null) 
+            return NotFound(new { message = "Reserva no encontrada" });
 
         if (reservation.Status == ReservationStatus.CheckedOut)
             return BadRequest(new { message = "La reserva ya se encuentra en estado Checked-out." });
 
-        var folio = await _folioRepository.GetByReservationIdAsync(id);
+        // 2. Obtener el ID del Folio (Sin cargar transacciones en memoria)
+        var folioInfo = await _context.Folios
+            .OfType<GuestFolio>()
+            .AsNoTracking()
+            .Where(f => f.ReservationId == id)
+            .Select(f => new { f.Id })
+            .FirstOrDefaultAsync();
         
-        if (folio == null) return BadRequest(new { message = "No se encontró el folio asociado a la reserva." });
+        if (folioInfo == null) 
+            return BadRequest(new { message = "No se encontró el folio asociado a la reserva." });
 
-        // 2. Validación de Deuda (Regla de Negocio: Margen de $100)
-        // Nota: Asumimos que folio.Balance es una propiedad calculada o mantenida por el dominio.
-        // Si no, deberíamos sumar folio.Transactions aquí.
-        if (folio.Balance > 100)
+        // 3. Validación de Deuda contra la Base de Datos (Evita datos 'stale' en memoria)
+        // NOTA: Requiere haber agregado GetFolioBalanceAsync en IFolioRepository
+        var currentBalance = await _folioRepository.GetFolioBalanceAsync(folioInfo.Id);
+        
+        decimal toleranceMargin = 100m; 
+
+        if (currentBalance > toleranceMargin)
         {
-            return StatusCode(409, new // Usamos 409 Conflict para indicar estado inválido de negocio
+            return StatusCode(409, new 
             {
                 error = "OUTSTANDING_DEBT",
-                message = $"El huésped tiene un saldo pendiente de {folio.Balance:C0}. Debe saldar la cuenta antes de la salida.",
-                currentBalance = folio.Balance
+                message = $"El huésped tiene un saldo pendiente de {currentBalance:C0}. Debe saldar la cuenta antes de la salida.",
+                currentBalance = currentBalance,
+                folioId = folioInfo.Id
             });
         }
 
-        // 3. Manejo de Early Departure (Salida Anticipada)
-        var today = DateTime.UtcNow.Date;
-        if (reservation.CheckOut.Date > today)
-        {
-            // Ajustar fecha global de la reserva
-            reservation.CheckOut = DateTime.UtcNow;
-
-            // Identificar segmentos afectados
-            var futureSegments = reservation.Segments
-                .Where(s => s.CheckIn.Date > today)
-                .ToList();
-
-            var currentSegment = reservation.Segments
-                .FirstOrDefault(s => s.CheckIn.Date <= today && s.CheckOut.Date >= today);
-
-            // A. Eliminar segmentos futuros para liberar disponibilidad inmediatamente
-            if (futureSegments.Any())
-            {
-                _context.Set<ReservationSegment>().RemoveRange(futureSegments);
-            }
-
-            // B. Recortar el segmento actual para que termine hoy
-            if (currentSegment != null)
-            {
-                currentSegment.CheckOut = DateTime.UtcNow;
-                _context.Update(currentSegment); // Marcar como modificado explícitamente
-            }
-        }
-
-        // 4. Cambios de Estado
-        reservation.Status = ReservationStatus.CheckedOut;
-        folio.Status = FolioStatus.Closed;
-
-        // 5. Liberación de Habitación (Housekeeping)
-        // Buscamos el último segmento válido (el de anoche/hoy) para marcar ESA habitación como sucia.
-        var lastOccupiedSegment = reservation.Segments
-            .OrderByDescending(s => s.CheckOut)
-            .FirstOrDefault(s => s.CheckIn.Date <= DateTime.UtcNow.Date);
-
-        Room? room = null;
-        if (lastOccupiedSegment != null)
-        {
-            room = await _roomRepository.GetByIdAsync(lastOccupiedSegment.RoomId);
-            if (room != null)
-            {
-                room.Status = RoomStatus.Dirty; // Se marca para limpieza
-                await _roomRepository.UpdateAsync(room); // Aseguramos actualización
-            }
-        }
+        // 4. Inicio de Transacción para asegurar consistencia
+        using var transaction = await _context.Database.BeginTransactionAsync();
 
         try
         {
-            // Guardamos todos los cambios (Reserva, Segmentos, Folio, Habitación) en una transacción implícita
-            // Nota: Si usas el repositorio genérico para guardar, asegúrate de que llame a SaveChangesAsync
-            // Aquí usamos el _context directamente para la operación atómica de múltiples entidades modificadas arriba
-            await _context.SaveChangesAsync();
+            // Adjuntamos la reserva al contexto para seguimiento de cambios
+            _context.Reservations.Attach(reservation);
 
+            // A. Manejo de Salida Anticipada (Early Departure)
+            var today = DateTime.UtcNow.Date;
+            if (reservation.CheckOut.Date > today)
+            {
+                reservation.CheckOut = DateTime.UtcNow;
+
+                var futureSegments = reservation.Segments
+                    .Where(s => s.CheckIn.Date > today)
+                    .ToList();
+
+                var currentSegment = reservation.Segments
+                    .FirstOrDefault(s => s.CheckIn.Date <= today && s.CheckOut.Date >= today);
+
+                // Eliminar segmentos futuros
+                if (futureSegments.Any())
+                {
+                    _context.Set<ReservationSegment>().RemoveRange(futureSegments);
+                }
+
+                // Ajustar fecha fin del segmento actual
+                if (currentSegment != null)
+                {
+                    currentSegment.CheckOut = DateTime.UtcNow;
+                    _context.Entry(currentSegment).State = EntityState.Modified;
+                }
+            }
+
+            // B. Actualizar Estados
+            reservation.Status = ReservationStatus.CheckedOut;
+            
+            // Actualización ligera del Folio (Stub Pattern)
+            var folioStub = new GuestFolio { Id = folioInfo.Id, Status = FolioStatus.Closed };
+            _context.Folios.Attach(folioStub);
+            _context.Entry(folioStub).Property(f => f.Status).IsModified = true;
+
+            // C. Liberación de Habitación (Housekeeping)
+            var lastOccupiedSegment = reservation.Segments
+                .OrderByDescending(s => s.CheckOut)
+                .FirstOrDefault(s => s.CheckIn.Date <= DateTime.UtcNow.Date);
+
+            string? roomNumberReleased = null;
+
+            if (lastOccupiedSegment != null)
+            {
+                var room = await _roomRepository.GetByIdAsync(lastOccupiedSegment.RoomId);
+                if (room != null)
+                {
+                    room.Status = RoomStatus.Dirty; 
+                    await _roomRepository.UpdateAsync(room); // UpdateAsync suele hacer SaveChanges interno, cuidado con la transacción
+                    roomNumberReleased = room.Number;
+                }
+            }
+
+            // Guardar todo y Commit
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            // Notificación (Fuera de la transacción crítica)
             await _notificationRepository.AddAsync(
                 "Check-out Completado",
-                $"Salida registrada para reserva {reservation.ConfirmationCode}. Habitación {(room?.Number ?? "N/A")} marcada como Sucia.",
-                NotificationType.Warning, // Warning para alertar a limpieza
+                $"Salida registrada para reserva {reservation.ConfirmationCode}. Habitación {(roomNumberReleased ?? "N/A")} marcada como Sucia.",
+                NotificationType.Warning,
                 "/habitaciones"
             );
 
             return Ok(new { 
                 message = "Check-out exitoso.", 
                 newStatus = "CheckedOut",
-                roomReleased = room?.Number
+                roomReleased = roomNumberReleased
             });
         }
         catch (Exception ex)
         {
+            await transaction.RollbackAsync();
             return StatusCode(500, new { message = "Error interno al procesar el check-out: " + ex.Message });
         }
     }

@@ -17,12 +17,10 @@ public class FolioRepository : IFolioRepository
 
     public async Task<Folio?> GetByIdAsync(Guid id)
     {
-        // Carga base polimórfica
         var folio = await _context.Folios
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.Id == id);
 
-        // Carga explícita de relaciones complejas para GuestFolio
         if (folio is GuestFolio guestFolio)
         {
             await _context.Entry(guestFolio)
@@ -33,7 +31,6 @@ public class FolioRepository : IFolioRepository
             {
                 await _context.Entry(guestFolio.Reservation).Reference(r => r.Guest).LoadAsync();
                 
-                // REFACTORIZADO: Cargar Segmentos -> Habitación en lugar de Habitación directa
                 await _context.Entry(guestFolio.Reservation)
                     .Collection(r => r.Segments)
                     .Query()
@@ -50,7 +47,7 @@ public class FolioRepository : IFolioRepository
         return await _context.Folios
             .OfType<GuestFolio>()
             .Include(f => f.Transactions)
-            .Include(f => f.Reservation).ThenInclude(r => r.Segments).ThenInclude(s => s.Room) // Incluimos segmentos
+            .Include(f => f.Reservation).ThenInclude(r => r.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(f => f.ReservationId == reservationId);
     }
 
@@ -79,9 +76,41 @@ public class FolioRepository : IFolioRepository
         await _context.SaveChangesAsync();
     }
 
+    // =========================================================================
+    // SOLUCIÓN BUG SALDO (Caso "Sofía Gomez")
+    // =========================================================================
+    public async Task<decimal> GetFolioBalanceAsync(Guid folioId)
+    {
+        // Usamos AsNoTracking para saltarnos el caché de EF Core y leer directo de DB.
+        var balanceData = await _context.Set<FolioTransaction>()
+            .AsNoTracking()
+            .Where(t => t.FolioId == folioId)
+            .GroupBy(t => t.FolioId)
+            .Select(g => new
+            {
+                // DEBE (Aumenta saldo/deuda):
+                // 1. Charge: Consumo normal.
+                // 2. Expense: Egreso de caja (ej. Devolución de dinero al cliente).
+                Debits = g.Where(t => t.Type == TransactionType.Charge || 
+                                      t.Type == TransactionType.Expense) 
+                          .Sum(t => t.Amount),
+
+                // HABER (Disminuye saldo/deuda):
+                // 1. Payment: Pago normal del cliente.
+                // 2. Income: Ingreso manual a caja vinculado al folio (Correcciones/Depósitos).
+                Credits = g.Where(t => t.Type == TransactionType.Payment || 
+                                       t.Type == TransactionType.Income) 
+                           .Sum(t => t.Amount)
+            })
+            .FirstOrDefaultAsync();
+
+        if (balanceData == null) return 0;
+
+        return balanceData.Debits - balanceData.Credits;
+    }
+
     public async Task<IEnumerable<GuestFolio>> GetActiveGuestFoliosAsync()
     {
-        // REFACTORIZADO: Incluir Segmentos y sus Habitaciones
         return await _context.Folios
             .OfType<GuestFolio>()
             .Include(f => f.Reservation).ThenInclude(r => r.Guest)
