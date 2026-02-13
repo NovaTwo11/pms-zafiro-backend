@@ -359,4 +359,121 @@ public class ReservationsController : ControllerBase
             return StatusCode(500, new { message = "Error interno al procesar el check-out: " + ex.Message });
         }
     }
+    
+    // ==========================================
+    // CANCELAR RESERVA
+    // ==========================================
+    [HttpPost("{id}/cancel")]
+    public async Task<IActionResult> Cancel(Guid id)
+    {
+        var reservation = await _context.Reservations.Include(r => r.Segments).FirstOrDefaultAsync(r => r.Id == id);
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+
+        if (reservation.Status == ReservationStatus.CheckedIn || reservation.Status == ReservationStatus.CheckedOut)
+            return BadRequest(new { message = "No se puede cancelar una reserva que ya ingresó o finalizó." });
+
+        reservation.Status = ReservationStatus.Cancelled;
+        
+        // Al marcarla como Cancelada, el Frontend la filtrará automáticamente. 
+        _context.Reservations.Update(reservation);
+        await _context.SaveChangesAsync();
+        
+        return Ok(new { message = "Reserva cancelada correctamente." });
+    }
+
+    // ==========================================
+    // DIVIDIR SEGMENTO (SPLIT)
+    // ==========================================
+    [HttpPost("{id}/segments/split")]
+    public async Task<IActionResult> SplitSegment(Guid id, [FromBody] SplitSegmentDto dto)
+    {
+        var reservation = await _context.Reservations.Include(r => r.Segments).FirstOrDefaultAsync(r => r.Id == id);
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+
+        var segments = reservation.Segments.OrderBy(s => s.CheckIn).ToList();
+        if (dto.SegmentIndex < 0 || dto.SegmentIndex >= segments.Count) 
+            return BadRequest(new { message = "Índice de segmento inválido." });
+
+        var targetSegment = segments[dto.SegmentIndex];
+
+        // Validar fechas
+        if (dto.SplitDate <= targetSegment.CheckIn || dto.SplitDate >= targetSegment.CheckOut)
+            return BadRequest(new { message = "La fecha de división debe estar estrictamente dentro del rango del segmento actual." });
+
+        // Crear el nuevo fragmento
+        var newSegment = new ReservationSegment
+        {
+            ReservationId = reservation.Id,
+            RoomId = dto.NewRoomId ?? targetSegment.RoomId,
+            CheckIn = dto.SplitDate,
+            CheckOut = targetSegment.CheckOut
+        };
+
+        // Acortar el fragmento original
+        targetSegment.CheckOut = dto.SplitDate;
+
+        _context.Set<ReservationSegment>().Add(newSegment);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Reserva fragmentada exitosamente." });
+    }
+
+    // ==========================================
+    // UNIFICAR SEGMENTOS (MERGE)
+    // ==========================================
+    [HttpPost("{id}/segments/merge")]
+    public async Task<IActionResult> MergeSegments(Guid id)
+    {
+        var reservation = await _context.Reservations.Include(r => r.Segments).FirstOrDefaultAsync(r => r.Id == id);
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+
+        var segments = reservation.Segments.OrderBy(s => s.CheckIn).ToList();
+        if (segments.Count <= 1) 
+            return BadRequest(new { message = "La reserva no tiene suficientes segmentos para unificar." });
+
+        var firstSegment = segments.First();
+        var lastSegment = segments.Last();
+
+        // Extender el primer segmento para cubrir toda la reserva en la habitación inicial
+        firstSegment.CheckOut = lastSegment.CheckOut;
+
+        // Eliminar el resto de fragmentos
+        _context.Set<ReservationSegment>().RemoveRange(segments.Skip(1));
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Segmentos unificados en la habitación principal." });
+    }
+
+    // ==========================================
+    // MOVER SEGMENTO (DRAG AND DROP)
+    // ==========================================
+    [HttpPut("{id}/segments/{segmentIndex}/move")]
+    public async Task<IActionResult> MoveSegment(Guid id, int segmentIndex, [FromBody] MoveSegmentDto dto)
+    {
+        var reservation = await _context.Reservations.Include(r => r.Segments).FirstOrDefaultAsync(r => r.Id == id);
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+
+        var segments = reservation.Segments.OrderBy(s => s.CheckIn).ToList();
+        if (segmentIndex < 0 || segmentIndex >= segments.Count) 
+            return BadRequest(new { message = "Segmento inválido." });
+
+        var targetSegment = segments[segmentIndex];
+
+        // Validar disponibilidad de la nueva habitación en tiempo real
+        bool isOccupied = await _context.Set<ReservationSegment>()
+            .AnyAsync(s => s.RoomId == dto.NewRoomId
+                        && s.ReservationId != id
+                        && s.CheckIn < targetSegment.CheckOut 
+                        && s.CheckOut > targetSegment.CheckIn
+                        && s.Reservation.Status != ReservationStatus.Cancelled);
+
+        if (isOccupied) 
+            return BadRequest(new { message = "La habitación destino está ocupada en esas fechas." });
+
+        // Actualizar habitación
+        targetSegment.RoomId = dto.NewRoomId;
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Reserva movida exitosamente." });
+    }
 }
