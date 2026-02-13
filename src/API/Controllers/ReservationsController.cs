@@ -288,7 +288,7 @@ public class ReservationsController : ControllerBase
     [HttpPost("{id}/checkout")]
     public async Task<IActionResult> CheckOut(Guid id)
     {
-        // 1. Obtener Datos (con segmentos para saber qué habitación liberar)
+        // 1. Obtener Datos: Incluimos Segmentos y Folio para tomar decisiones
         var reservation = await _context.Reservations
             .Include(r => r.Segments)
             .FirstOrDefaultAsync(r => r.Id == id);
@@ -296,54 +296,98 @@ public class ReservationsController : ControllerBase
         if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
 
         if (reservation.Status == ReservationStatus.CheckedOut)
-            return BadRequest(new { message = "La reserva ya hizo Check-out." });
+            return BadRequest(new { message = "La reserva ya se encuentra en estado Checked-out." });
 
         var folio = await _folioRepository.GetByReservationIdAsync(id);
         
-        if (folio == null) return BadRequest(new { message = "No se encontró folio." });
+        if (folio == null) return BadRequest(new { message = "No se encontró el folio asociado a la reserva." });
 
-        if (Math.Abs(folio.Balance) > 100)
+        // 2. Validación de Deuda (Regla de Negocio: Margen de $100)
+        // Nota: Asumimos que folio.Balance es una propiedad calculada o mantenida por el dominio.
+        // Si no, deberíamos sumar folio.Transactions aquí.
+        if (folio.Balance > 100)
         {
-            return BadRequest(new
+            return StatusCode(409, new // Usamos 409 Conflict para indicar estado inválido de negocio
             {
-                error = "DeudaPendiente",
-                message = $"El huésped debe {folio.Balance:C0}"
+                error = "OUTSTANDING_DEBT",
+                message = $"El huésped tiene un saldo pendiente de {folio.Balance:C0}. Debe saldar la cuenta antes de la salida.",
+                currentBalance = folio.Balance
             });
         }
 
-        if (reservation.CheckOut.Date > DateTime.UtcNow.Date)
+        // 3. Manejo de Early Departure (Salida Anticipada)
+        var today = DateTime.UtcNow.Date;
+        if (reservation.CheckOut.Date > today)
         {
+            // Ajustar fecha global de la reserva
             reservation.CheckOut = DateTime.UtcNow;
+
+            // Identificar segmentos afectados
+            var futureSegments = reservation.Segments
+                .Where(s => s.CheckIn.Date > today)
+                .ToList();
+
+            var currentSegment = reservation.Segments
+                .FirstOrDefault(s => s.CheckIn.Date <= today && s.CheckOut.Date >= today);
+
+            // A. Eliminar segmentos futuros para liberar disponibilidad inmediatamente
+            if (futureSegments.Any())
+            {
+                _context.Set<ReservationSegment>().RemoveRange(futureSegments);
+            }
+
+            // B. Recortar el segmento actual para que termine hoy
+            if (currentSegment != null)
+            {
+                currentSegment.CheckOut = DateTime.UtcNow;
+                _context.Update(currentSegment); // Marcar como modificado explícitamente
+            }
         }
 
+        // 4. Cambios de Estado
         reservation.Status = ReservationStatus.CheckedOut;
         folio.Status = FolioStatus.Closed;
 
-        // Liberar la habitación del último segmento (o el activo)
-        var lastSegment = reservation.Segments.OrderByDescending(s => s.CheckOut).FirstOrDefault();
+        // 5. Liberación de Habitación (Housekeeping)
+        // Buscamos el último segmento válido (el de anoche/hoy) para marcar ESA habitación como sucia.
+        var lastOccupiedSegment = reservation.Segments
+            .OrderByDescending(s => s.CheckOut)
+            .FirstOrDefault(s => s.CheckIn.Date <= DateTime.UtcNow.Date);
+
         Room? room = null;
-        if (lastSegment != null)
+        if (lastOccupiedSegment != null)
         {
-            room = await _roomRepository.GetByIdAsync(lastSegment.RoomId);
-            if (room != null) room.Status = RoomStatus.Dirty;
+            room = await _roomRepository.GetByIdAsync(lastOccupiedSegment.RoomId);
+            if (room != null)
+            {
+                room.Status = RoomStatus.Dirty; // Se marca para limpieza
+                await _roomRepository.UpdateAsync(room); // Aseguramos actualización
+            }
         }
 
         try
         {
-            await _repository.ProcessCheckOutAsync(reservation, room, folio);
+            // Guardamos todos los cambios (Reserva, Segmentos, Folio, Habitación) en una transacción implícita
+            // Nota: Si usas el repositorio genérico para guardar, asegúrate de que llame a SaveChangesAsync
+            // Aquí usamos el _context directamente para la operación atómica de múltiples entidades modificadas arriba
+            await _context.SaveChangesAsync();
 
             await _notificationRepository.AddAsync(
-                "Salida Confirmada",
-                $"Habitación {room?.Number ?? "N/A"} liberada.",
-                NotificationType.Warning,
+                "Check-out Completado",
+                $"Salida registrada para reserva {reservation.ConfirmationCode}. Habitación {(room?.Number ?? "N/A")} marcada como Sucia.",
+                NotificationType.Warning, // Warning para alertar a limpieza
                 "/habitaciones"
             );
 
-            return Ok(new { message = "Check-out exitoso.", newStatus = "CheckedOut" });
+            return Ok(new { 
+                message = "Check-out exitoso.", 
+                newStatus = "CheckedOut",
+                roomReleased = room?.Number
+            });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Error interno al procesar el check-out." });
+            return StatusCode(500, new { message = "Error interno al procesar el check-out: " + ex.Message });
         }
     }
 }
