@@ -49,7 +49,7 @@ public class SeedController : ControllerBase
             UserId = "system",
             OpenedAt = DateTime.UtcNow.AddYears(-1),
             ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
-            StartingAmount = 0, // CORREGIDO: Antes era InitialAmount
+            StartingAmount = 0, 
             Status = CashierShiftStatus.Closed
         };
         await _context.CashierShifts.AddAsync(systemShift);
@@ -73,7 +73,6 @@ public class SeedController : ControllerBase
     private async Task<List<Room>> CreateRooms()
     {
         var rooms = new List<Room>();
-        // Usamos strings porque tu entidad Room tiene 'public string Category'
         var categories = new[] { "Sencilla", "Doble", "Familiar", "Suite Familiar" }; 
         var prices = new[] { 150000m, 220000m, 280000m, 350000m };
 
@@ -87,7 +86,7 @@ public class SeedController : ControllerBase
                     Id = Guid.NewGuid(),
                     Number = $"{floor}{num:00}",
                     Floor = floor,
-                    Category = categories[typeIndex], // CORREGIDO: Antes era Type
+                    Category = categories[typeIndex],
                     BasePrice = prices[typeIndex],
                     Status = RoomStatus.Available 
                 };
@@ -129,10 +128,12 @@ public class SeedController : ControllerBase
     {
         var products = new List<Product>
         {
-            new() { Id = Guid.NewGuid(), Name = "Coca Cola", UnitPrice = 5000, Category = "Minibar", Stock = 100 },
-            new() { Id = Guid.NewGuid(), Name = "Agua", UnitPrice = 4000, Category = "Minibar", Stock = 100 },
-            new() { Id = Guid.NewGuid(), Name = "Cerveza", UnitPrice = 8000, Category = "Minibar", Stock = 100 },
-            new() { Id = Guid.NewGuid(), Name = "Lavandería Express", UnitPrice = 25000, Category = "Servicios", Stock = 999 }
+            new() { Id = Guid.NewGuid(), Name = "Coca-Cola", Description = "Lata 330ml", UnitPrice = 6000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { Id = Guid.NewGuid(), Name = "Agua Mineral", Description = "Botella 500ml", UnitPrice = 4000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { Id = Guid.NewGuid(), Name = "Cerveza Club", Description = "Botella 330ml Ambar", UnitPrice = 8000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { Id = Guid.NewGuid(), Name = "Hamburguesa Clásica", Description = "150g Res, Queso, Papas", UnitPrice = 32000, Category = "Platos", Stock = 20, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { Id = Guid.NewGuid(), Name = "Club Sandwich", Description = "Pollo, tocineta, huevo", UnitPrice = 28000, Category = "Platos", Stock = 15, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { Id = Guid.NewGuid(), Name = "Lavandería Express", Description = "Lavado y planchado rápido", UnitPrice = 25000, Category = "Servicios", Stock = 999, IsActive = true, CreatedAt = DateTime.UtcNow }
         };
         await _context.Products.AddRangeAsync(products);
         await _context.SaveChangesAsync();
@@ -186,6 +187,8 @@ public class SeedController : ControllerBase
                 CheckIn = checkIn,
                 CheckOut = checkOut,
                 Status = ReservationStatus.Confirmed,
+                Adults = _random.Next(1, 3),
+                Children = _random.Next(0, 2),
                 TotalAmount = room.BasePrice * 2,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -222,8 +225,10 @@ public class SeedController : ControllerBase
             CheckIn = checkIn,
             CheckOut = checkOut,
             Status = ReservationStatus.Confirmed,
+            Adults = 2,
+            Children = 0,
             TotalAmount = (room1.BasePrice * 2) + room2.BasePrice,
-            Notes = "Split Stay Demo",
+            Notes = "Split Stay Demo - Cambio de habitación",
             CreatedAt = DateTimeOffset.UtcNow
         };
 
@@ -247,6 +252,8 @@ public class SeedController : ControllerBase
             CheckIn = checkIn,
             CheckOut = checkOut,
             Status = status,
+            Adults = _random.Next(1, 3),
+            Children = _random.Next(0, 2),
             TotalAmount = total,
             CreatedAt = checkIn.AddDays(-5)
         };
@@ -284,19 +291,21 @@ public class SeedController : ControllerBase
 
         if (_random.NextDouble() > 0.5)
         {
-            var p = products[0];
+            var p = products[_random.Next(products.Count)];
             await _context.FolioTransactions.AddAsync(new FolioTransaction
             {
                 Id = Guid.NewGuid(),
                 FolioId = folio.Id,
                 Amount = p.UnitPrice,
-                Description = $"Consumo {p.Name}",
+                Description = $"Consumo: {p.Name}",
                 Type = TransactionType.Charge,
                 Quantity = 1,
                 UnitPrice = p.UnitPrice,
                 CashierShiftId = shiftId,
                 CreatedAt = checkIn.AddHours(1)
             });
+            // Al hacer "TotalAmount += p.UnitPrice" actualizamos lo que debe el cliente
+            res.TotalAmount += p.UnitPrice;
         }
 
         if (isFinished)
