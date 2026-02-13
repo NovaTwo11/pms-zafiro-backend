@@ -145,42 +145,64 @@ public class ReservationsController : ControllerBase
     [HttpPost("{id}/checkin")]
     public async Task<IActionResult> CheckIn(Guid id)
     {
+        // 1. Obtener datos con relaciones
         var reservation = await _repository.GetByIdAsync(id);
         if (reservation == null) return NotFound("Reserva no encontrada");
 
+        // 2. Validaciones de Estado de Reserva
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
-            return BadRequest("El estado de la reserva no permite Check-in.");
+            return BadRequest($"La reserva está en estado {reservation.Status}, no se puede hacer Check-in.");
 
-        reservation.Status = ReservationStatus.CheckedIn;
-        await _repository.UpdateAsync(reservation);
-
+        // 3. Validaciones de Habitación
         var room = await _roomRepository.GetByIdAsync(reservation.RoomId);
-        if (room != null)
-        {
-            room.Status = RoomStatus.Occupied;
-            await _roomRepository.UpdateAsync(room);
-        }
+        if (room == null) return BadRequest("La habitación asignada no existe.");
+        
+        // Regla de Negocio: No permitir Check-in si la habitación está en Mantenimiento o Bloqueada
+        if (room.Status == RoomStatus.Maintenance || room.Status == RoomStatus.Blocked)
+            return BadRequest($"La habitación {room.Number} está en {room.Status} y no puede ocuparse.");
 
+        // 4. Preparar Cambios (En memoria)
+        reservation.Status = ReservationStatus.CheckedIn;
+        reservation.CheckIn = DateTime.UtcNow; // Ajustar hora real de entrada
+        
+        room.Status = RoomStatus.Occupied;
+
+        // 5. Preparar Folio
         var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
-        if (existingFolio == null)
+        if (existingFolio != null) 
+            return BadRequest("Ya existe un folio para esta reserva. Error de consistencia.");
+
+        var folio = new GuestFolio
         {
-            var folio = new GuestFolio
-            {
-                ReservationId = id,
-                Status = FolioStatus.Open,
-                CreatedAt = DateTimeOffset.UtcNow
-            };
-            await _folioRepository.AddAsync(folio);
+            ReservationId = id,
+            Status = FolioStatus.Open,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        // 6. Ejecución Atómica
+        try 
+        {
+            await _repository.ProcessCheckInAsync(reservation, room, folio);
+            
+            // Notificación (Fuera de la transacción crítica)
+            await _notificationRepository.AddAsync(
+                "Check-in Exitoso",
+                $"Huésped {reservation.Guest?.FullName} en habitación {room.Number}",
+                NotificationType.Success,
+                $"/folios/{folio.Id}" // Enlace directo al folio
+            );
+
+            return Ok(new { 
+                message = "Check-in realizado correctamente", 
+                folioId = folio.Id,
+                status = "CheckedIn" 
+            });
         }
-
-        await _notificationRepository.AddAsync(
-            "Check-in Realizado",
-            $"Huésped {reservation.Guest?.FullName} ingresó a habitación {room?.Number}",
-            NotificationType.Info,
-            $"/folios"
-        );
-
-        return Ok(new { message = "Check-in exitoso y Folio creado.", status = "CheckedIn" });
+        catch (Exception ex)
+        {
+            // Log error
+            return StatusCode(500, "Error interno al procesar el Check-in: " + ex.Message);
+        }
     }
 
     [HttpPost("{id}/checkout")]

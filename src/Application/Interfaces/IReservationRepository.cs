@@ -15,4 +15,6 @@ public interface IReservationRepository
     Task ProcessCheckOutAsync(Reservation reservation, Room? room, Folio folio);
     
     Task<IEnumerable<Reservation>> GetActiveReservationsByRoomAsync(Guid roomId);
+    
+    Task ProcessCheckInAsync(Reservation reservation, Room room, GuestFolio newFolio);
 }

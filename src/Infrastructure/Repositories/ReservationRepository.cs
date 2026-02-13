@@ -96,4 +96,33 @@ public class ReservationRepository : IReservationRepository
                        (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
             .ToListAsync();
     }
+    
+    public async Task ProcessCheckInAsync(Reservation reservation, Room room, GuestFolio newFolio)
+    {
+        var strategy = _context.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // 1. Actualizar Reserva
+                _context.Reservations.Update(reservation);
+            
+                // 2. Actualizar Habitación
+                _context.Rooms.Update(room);
+
+                // 3. Crear Folio (Solo si no existe, validado en Controller, pero aquí se persiste)
+                await _context.Folios.AddAsync(newFolio);
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
+    }
 }
