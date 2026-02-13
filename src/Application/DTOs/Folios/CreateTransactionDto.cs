@@ -1,28 +1,38 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using PmsZafiro.Domain.Enums;
 
 namespace PmsZafiro.Application.DTOs.Folios;
 
 public class CreateTransactionDto
 {
-    [Required] 
+    [Required]
+    [JsonPropertyName("amount")] // Fuerza mapeo minúscula
     public decimal Amount { get; set; }
     
-    [Required] 
+    [Required]
+    [JsonPropertyName("description")]
     public string Description { get; set; } = string.Empty;
     
-    [Required] 
+    [Required]
+    [JsonPropertyName("type")] // ✅ ESTO CORREGIRÁ EL ERROR (Evita que sea 0 por defecto)
     public TransactionType Type { get; set; } 
     
+    [JsonPropertyName("quantity")]
     public int Quantity { get; set; } = 1;
-    public decimal UnitPrice { get; set; } // Opcional si el front lo calcula, o Amount se ignora
+
+    [JsonPropertyName("unitPrice")]
+    public decimal UnitPrice { get; set; }
     
-    // Propiedades para POS
+    [JsonPropertyName("paymentMethod")]
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.None;
+
+    [JsonPropertyName("cashierShiftId")]
     public Guid? CashierShiftId { get; set; }
     
-    // Category es útil para reportes estadísticos, aunque no esté en la entidad Transaction, 
-    // podrías guardarlo en Description o agregar el campo a la entidad.
+    [JsonPropertyName("category")]
     public string? Category { get; set; } 
+    
+    [JsonPropertyName("productId")]
     public Guid? ProductId { get; set; }
 }

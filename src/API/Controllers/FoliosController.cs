@@ -127,7 +127,7 @@ public class FoliosController : ControllerBase
         await _repository.AddAsync(folio);
         return CreatedAtAction(nameof(GetById), new { id = folio.Id }, new { id = folio.Id, message = "Folio externo creado" });
     }
-
+    
     [HttpPost("{id}/transactions")]
     public async Task<IActionResult> AddTransaction(Guid id, [FromBody] CreateTransactionDto dto)
     {
@@ -136,7 +136,7 @@ public class FoliosController : ControllerBase
 
         // 2. Buscar turno abierto
         var openShift = await _cashierService.GetOpenShiftEntityAsync(currentUserId);
-    
+
         if (openShift == null)
         {
             return BadRequest(new { 
@@ -145,21 +145,40 @@ public class FoliosController : ControllerBase
             });
         }
 
+        // ========================================================================
+        // 🔴 FIX CRÍTICO: RED DE SEGURIDAD PARA EL TIPO DE TRANSACCIÓN
+        // ========================================================================
+        // Si el JSON Binding falló y 'Type' llegó como 0 (Charge) por defecto,
+        // pero la descripción dice explícitamente "Pago", lo corregimos manualmente.
+        if (dto.Type == TransactionType.Charge && 
+           (dto.Description.Contains("Pago", StringComparison.OrdinalIgnoreCase) || 
+            dto.Description.Contains("Abono", StringComparison.OrdinalIgnoreCase)))
+        {
+            dto.Type = TransactionType.Payment; // Forzamos el tipo correcto (1)
+        }
+        // ========================================================================
+
         // VALIDACIÓN ANTI-ERROR CONTABLE
+        // Solo los Cargos pueden ser negativos (correcciones). Los Pagos siempre entran positivos y el sistema los resta.
         if (dto.Amount < 0 && dto.Type != TransactionType.Charge)
         {
              return BadRequest(new { 
                 error = "Operación Inválida", 
-                message = "Solo los Cargos pueden tener valor negativo (para correcciones). Los Pagos deben ser positivos." 
+                message = "Solo los Cargos pueden tener valor negativo. Los Pagos deben ser positivos." 
             });
         }
 
         var folio = await _repository.GetByIdAsync(id);
         if (folio == null) return NotFound("El folio no existe.");
         
+        // Validación de método de pago
         if (dto.Type == TransactionType.Payment && (int)dto.PaymentMethod < 1)
         {
-            return BadRequest("Para registrar un pago debe especificar un método de pago válido.");
+            // Si es pago pero viene sin método, asignamos Efectivo por defecto para evitar error
+            if (dto.PaymentMethod == PaymentMethod.None) 
+                dto.PaymentMethod = PaymentMethod.Cash;
+            else
+                return BadRequest("Para registrar un pago debe especificar un método de pago válido.");
         }
 
         // 3. Crear la transacción
@@ -169,9 +188,10 @@ public class FoliosController : ControllerBase
             FolioId = id,
             Amount = dto.Amount,
             Description = dto.Description,
-            Type = dto.Type, 
+            Type = dto.Type, // Aquí ya lleva el valor corregido (1 si es pago)
             Quantity = dto.Quantity > 0 ? dto.Quantity : 1,
             UnitPrice = dto.UnitPrice > 0 ? dto.UnitPrice : (dto.Amount < 0 ? -dto.Amount : dto.Amount),
+            // Si es Cargo, PaymentMethod es None. Si es Pago, usamos el del DTO.
             PaymentMethod = dto.Type == TransactionType.Charge ? PaymentMethod.None : dto.PaymentMethod,        
             CashierShiftId = openShift.Id,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -180,13 +200,13 @@ public class FoliosController : ControllerBase
 
         await _repository.AddTransactionAsync(transaction);
         
+        // Descuento de inventario (solo si aplica)
         if (dto.ProductId.HasValue && dto.Type == TransactionType.Charge)
         {
             var product = await _productRepository.GetByIdAsync(dto.ProductId.Value);
             if (product != null && product.IsStockTracked)
             {
                 product.Stock -= dto.Quantity;
-                // Si permites vender en negativo, omite la siguiente línea. Si no, déjala:
                 if (product.Stock < 0) product.Stock = 0; 
 
                 await _productRepository.UpdateAsync(product);

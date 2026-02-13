@@ -48,29 +48,29 @@ public class ReservationsController : ControllerBase
     {
         var r = await _context.Reservations
             .Include(x => x.Guest)
-            // Si tienes una relación de acompañantes en tu modelo, inclúyela aquí.
-            // .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
+            // 1. SOLUCIÓN HUÉSPEDES: Descomentar cuando agregues la colección ReservationGuests a la Entidad
+            .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
             .Include(x => x.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (r == null) return NotFound();
 
-        // Buscar el Folio y transacciones asociadas
         var folio = await _context.Folios.OfType<GuestFolio>()
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.ReservationId == id);
 
+        // 2. SOLUCIÓN BALANCE: Calcular sumas absolutas
         var paidAmount = folio?.Transactions
             .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
-            .Sum(t => t.Amount) ?? 0;
+            .Sum(t => Math.Abs(t.Amount)) ?? 0;
 
-        var balance = folio != null ? folio.Transactions.Sum(t => 
-                            (t.Type == TransactionType.Charge || t.Type == TransactionType.Expense) ? t.Amount : 
-                            (t.Type == TransactionType.Payment || t.Type == TransactionType.Income) ? -t.Amount : 0) : 0;
+        var charges = folio?.Transactions
+            .Where(t => t.Type == TransactionType.Charge || t.Type == TransactionType.Expense)
+            .Sum(t => t.Amount) ?? 0;
+            
+        var balance = charges - paidAmount;
 
         var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
-
-        // Construir la lista de huéspedes (Titular + Acompañantes si existieran)
         var guestsList = new List<GuestDetailDto>();
 
         // Agregar titular
@@ -78,7 +78,7 @@ public class ReservationsController : ControllerBase
         {
             guestsList.Add(new GuestDetailDto
             {
-                Id = r.Guest.Id.ToString(),
+                Id = r.Guest.Id.ToString(), // GuestDetailDto usa string, aquí SÍ va ToString()
                 PrimerNombre = r.Guest.FirstName,
                 PrimerApellido = r.Guest.LastName,
                 Correo = r.Guest.Email,
@@ -87,26 +87,47 @@ public class ReservationsController : ControllerBase
                 NumeroId = r.Guest.DocumentNumber,
                 Nacionalidad = r.Guest.Nationality,
                 EsTitular = true,
-                IsSigned = r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut
+                IsSigned = r.Status >= ReservationStatus.CheckedIn 
             });
         }
 
-        // Si tienes lógica para acompañantes (ej: r.Companions), agrégala aquí a guestsList
+        // 1.1 SOLUCIÓN HUÉSPEDES: Lógica preparada (Comentada para que compile)
+        if (r.ReservationGuests != null)
+        {
+            foreach (var rg in r.ReservationGuests)
+            {
+                if (rg.Guest == null) continue;
+                guestsList.Add(new GuestDetailDto
+                {
+                    Id = rg.Guest.Id.ToString(),
+                    PrimerNombre = rg.Guest.FirstName,
+                    PrimerApellido = rg.Guest.LastName,
+                    NumeroId = rg.Guest.DocumentNumber,
+                    Nacionalidad = rg.Guest.Nationality,
+                    EsTitular = false,
+                    IsSigned = true 
+                });
+            }
+        } 
+
+        // 3. SOLUCIÓN STEPPER
+        int statusStep = 1;
+        if (r.Status == ReservationStatus.Confirmed) statusStep = 2;
+        else if (r.Status == ReservationStatus.CheckedIn) statusStep = 3;
+        else if (r.Status == ReservationStatus.CheckedOut) statusStep = 4;
+        else if (r.Status == ReservationStatus.Cancelled || r.Status == ReservationStatus.NoShow) statusStep = 0;
 
         var dto = new ReservationDto
         {
             Id = r.Id,
             Code = r.ConfirmationCode,
-            Status = r.Status.ToString().ToLower(),
-            StatusStep = r.Status == ReservationStatus.Pending ? 1 :
-                         r.Status == ReservationStatus.Confirmed ? 2 :
-                         r.Status == ReservationStatus.CheckedIn ? 3 : 4,
+            Status = r.Status.ToString(),
+            StatusStep = statusStep,
             
-            // Usamos RoomId para el número visual ("101") porque así lo espera tu frontend actual
             RoomId = mainSegment?.Room?.Number ?? "?", 
-            RoomName = mainSegment?.Room.Category ?? "Habitación Estándar",
+            RoomName = mainSegment?.Room.Category ?? "Habitación",
             
-            MainGuestId = r.GuestId,
+            MainGuestId = r.GuestId, // GUID directo (sin ToString)
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
             CheckOut = r.CheckOut,
@@ -118,7 +139,8 @@ public class ReservationsController : ControllerBase
             TotalAmount = r.TotalAmount,
             PaidAmount = paidAmount,
             Balance = balance,
-            FolioId = folio?.Id,
+            FolioId = folio?.Id, // GUID nullable directo (sin ToString)
+            
             Segments = r.Segments.Select(s => new ReservationSegmentDto
             {
                 RoomId = s.RoomId,
@@ -127,18 +149,17 @@ public class ReservationsController : ControllerBase
                 End = s.CheckOut
             }).ToList(),
             
-            // Asignamos la lista que construimos arriba
             Guests = guestsList,
             
-            // Mapeamos los items del folio para la pestaña de Finanzas
-            FolioItems = folio?.Transactions.Select(t => new FolioItemDto
+            // 4. SOLUCIÓN FINANZAS
+            FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
             {
-                Id = t.Id,
-                Date = t.CreatedAt.ToString("yyyy-MM-dd"),
+                Id = t.Id, // GUID directo (sin ToString)
+                Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 Concept = t.Description ?? "Movimiento",
                 Qty = 1,
-                Price = t.Amount, // Enviamos el monto real (positivo/negativo)
-                Total = Math.Abs(t.Amount) // Para visualización absoluta si se requiere
+                Price = t.Amount, 
+                Total = t.Amount
             }).ToList() ?? new List<FolioItemDto>()
         };
 
@@ -146,24 +167,21 @@ public class ReservationsController : ControllerBase
     }
 
     // ==========================================
-    // CREATE: RESERVA MANUAL CON CÁLCULO DE TARIFA
+    // CREATE: RESERVA MANUAL
     // ==========================================
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
-        // 1. Obtener la habitación y sus precios
         var room = await _context.Rooms
             .Include(r => r.PriceOverrides)
             .FirstOrDefaultAsync(r => r.Id == dto.RoomId);
 
         if (room == null) return BadRequest("La habitación no existe.");
 
-        // 2. Calcular el valor de la estadía (Revisando overrides día por día)
         decimal calculatedTotal = 0;
         var checkInDate = dto.CheckIn.Date;
         var checkOutDate = dto.CheckOut.Date;
 
-        // Validar Day Use (Si entra y sale el mismo día, se cobra 1 noche mínima)
         if (checkInDate >= checkOutDate)
         {
             var overridePrice = room.PriceOverrides.FirstOrDefault(p => p.Date == DateOnly.FromDateTime(checkInDate));
@@ -179,7 +197,6 @@ public class ReservationsController : ControllerBase
             }
         }
 
-        // 3. Lógica de Huésped
         Guest? guest = null;
         if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
         {
@@ -199,7 +216,6 @@ public class ReservationsController : ControllerBase
             await _guestRepository.AddAsync(guest);
         }
 
-        // 4. Crear Reserva
         var reservation = new Reservation
         {
             GuestId = guest.Id,
@@ -208,7 +224,7 @@ public class ReservationsController : ControllerBase
             Adults = dto.Adults,
             Children = dto.Children,
             Notes = dto.SpecialRequests,
-            TotalAmount = calculatedTotal, // ✅ CÁLCULO APLICADO
+            TotalAmount = calculatedTotal, 
             Status = Enum.TryParse<ReservationStatus>(dto.Status, out var statusParsed) ? statusParsed : ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
@@ -238,7 +254,7 @@ public class ReservationsController : ControllerBase
     }
 
     // ==========================================
-    // CREATE BOOKING: RESERVA WEB CON CÁLCULO DE TARIFA
+    // CREATE BOOKING: RESERVA WEB
     // ==========================================
     [HttpPost("booking")]
     public async Task<ActionResult<ReservationDto>> CreateBooking(CreateBookingRequestDto dto)
@@ -295,7 +311,7 @@ public class ReservationsController : ControllerBase
             GuestId = guest.Id,
             CheckIn = checkInDate,
             CheckOut = checkOutDate,
-            TotalAmount = calculatedTotal, // ✅ CÁLCULO APLICADO
+            TotalAmount = calculatedTotal, 
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
             ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 8).ToUpper()

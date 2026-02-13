@@ -9,8 +9,7 @@ public class Reservation
     
     public Guid GuestId { get; set; }
     public Guest Guest { get; set; } = null!;
-
-    // ✅ CAMBIO CLAVE: Relación 1:N con Segmentos
+    public ICollection<ReservationGuest> ReservationGuests { get; set; } = new List<ReservationGuest>();
     public ICollection<ReservationSegment> Segments { get; set; } = new List<ReservationSegment>();
 
     // CheckIn/CheckOut globales (limites de la reserva completa)
