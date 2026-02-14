@@ -54,6 +54,7 @@ public class GuestDetailDto
     public string NumeroId { get; set; } = string.Empty;
     public string Nacionalidad { get; set; } = string.Empty;
     public string Ocupacion { get; set; } = string.Empty;
+    public DateTime? FechaNacimiento { get; set; }
     public bool EsTitular { get; set; }
     public bool IsSigned { get; set; }
 }

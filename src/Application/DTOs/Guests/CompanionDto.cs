@@ -1,12 +1,9 @@
 ﻿using System.Text.Json.Serialization;
-using System.ComponentModel.DataAnnotations;
 
 namespace PmsZafiro.Application.DTOs.Guests;
 
-public class UpdateCheckInGuestDto
+public class CompanionDto
 {
-    // === Datos del Titular ===
-
     [JsonPropertyName("primerNombre")]
     public string PrimerNombre { get; set; } = string.Empty;
 
@@ -27,21 +24,4 @@ public class UpdateCheckInGuestDto
 
     [JsonPropertyName("nacionalidad")]
     public string Nacionalidad { get; set; } = string.Empty;
-
-    [JsonPropertyName("telefono")]
-    public string? Telefono { get; set; }
-
-    [JsonPropertyName("correo")]
-    public string? Correo { get; set; }
-
-    [JsonPropertyName("fechaNacimiento")]
-    public string? FechaNacimiento { get; set; }
-
-    // === NUEVAS PROPIEDADES (Las que causaban el error) ===
-
-    [JsonPropertyName("signatureBase64")]
-    public string? SignatureBase64 { get; set; }
-
-    [JsonPropertyName("companions")]
-    public List<CompanionDto>? Companions { get; set; } = new();
 }

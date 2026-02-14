@@ -9,6 +9,7 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\PmsZafir
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Azure.Core.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Azure.Identity.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Humanizer.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.AspNetCore.OpenApi.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.Bcl.AsyncInterfaces.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.Bcl.Cryptography.dll
@@ -39,6 +40,9 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsof
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.VisualStudio.SolutionPersistence.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Mono.TextTemplating.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Newtonsoft.Json.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\System.ClientModel.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\System.CodeDom.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\System.Composition.AttributedModel.dll
@@ -147,6 +151,7 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafir
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.csproj.CoreCompileInputs.cache
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.MvcApplicationPartsAssemblyInfo.cs
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.sourcelink.json
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\rjimswa.dswa.cache.json
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\rjsmrazor.dswa.cache.json
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\rjsmcshtml.dswa.cache.json
@@ -162,8 +167,3 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\refint\P
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.pdb
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.genruntimeconfig.cache
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\ref\PmsZafiro.API.dll
-C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafiro.API.sourcelink.json
-C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
-C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
-C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
-C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll

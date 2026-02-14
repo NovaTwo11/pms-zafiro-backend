@@ -83,11 +83,11 @@ public class ReservationsController : ControllerBase
 
         if (r == null) return NotFound();
 
+        // --- Lógica Financiera (Folio y Balance) ---
         var folio = await _context.Folios.OfType<GuestFolio>()
             .Include(f => f.Transactions)
             .FirstOrDefaultAsync(f => f.ReservationId == id);
 
-        // 2. SOLUCIÓN BALANCE: Calcular sumas absolutas
         var paidAmount = folio?.Transactions
             .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
             .Sum(t => Math.Abs(t.Amount)) ?? 0;
@@ -98,58 +98,83 @@ public class ReservationsController : ControllerBase
             
         var balance = charges - paidAmount;
 
-        var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+        // --- Helper Local para Nombres ---
+        // Separa "Juan Carlos" en "Juan" y "Carlos" para que el frontend no se rompa
+        (string p, string s) SplitName(string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
+            var parts = fullName.Trim().Split(' ', 2);
+            return (parts[0], parts.Length > 1 ? parts[1] : "");
+        }
+
         var guestsList = new List<GuestDetailDto>();
 
-        // Agregar titular
+        // 1. Mapeo del Titular (Datos Completos)
         if (r.Guest != null)
         {
-            // Determinar si está firmado (si hay firma en notas o campo específico)
-            // Asumimos que la firma se marca con "[FIRMADO]" en notas por ahora si no hay campo específico
+            var (nom1, nom2) = SplitName(r.Guest.FirstName);
+            var (ape1, ape2) = SplitName(r.Guest.LastName);
+            
+            // Detectar firma en las notas
             bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
 
             guestsList.Add(new GuestDetailDto
             {
-                Id = r.Guest.Id.ToString(), 
-                PrimerNombre = r.Guest.FirstName,
-                PrimerApellido = r.Guest.LastName,
+                Id = r.Guest.Id.ToString(),
+                PrimerNombre = nom1,
+                SegundoNombre = nom2,
+                PrimerApellido = ape1,
+                SegundoApellido = ape2,
                 Correo = r.Guest.Email,
                 Telefono = r.Guest.Phone,
                 TipoId = r.Guest.DocumentType.ToString(),
                 NumeroId = r.Guest.DocumentNumber,
                 Nacionalidad = r.Guest.Nationality,
+                FechaNacimiento = r.Guest.BirthDate?.ToDateTime(TimeOnly.MinValue),
                 EsTitular = true,
                 IsSigned = isSigned 
             });
         }
 
-        // Agregar acompañantes
+        // 2. Mapeo de Acompañantes (Datos Básicos)
         if (r.ReservationGuests != null)
         {
             foreach (var rg in r.ReservationGuests)
             {
                 if (rg.Guest == null) continue;
+                var (n1, n2) = SplitName(rg.Guest.FirstName);
+                var (a1, a2) = SplitName(rg.Guest.LastName);
+
                 guestsList.Add(new GuestDetailDto
                 {
                     Id = rg.Guest.Id.ToString(),
-                    PrimerNombre = rg.Guest.FirstName,
-                    PrimerApellido = rg.Guest.LastName,
+                    PrimerNombre = n1,
+                    SegundoNombre = n2,
+                    PrimerApellido = a1,
+                    SegundoApellido = a2,
+                    TipoId = rg.Guest.DocumentType.ToString(),
                     NumeroId = rg.Guest.DocumentNumber,
                     Nacionalidad = rg.Guest.Nationality,
                     EsTitular = false,
-                    IsSigned = true // Acompañantes asumen firma del titular o proceso simple
+                    IsSigned = true // Acompañantes asumen estado OK por simplicidad
                 });
             }
         } 
 
-        // 3. SOLUCIÓN STEPPER
-        int statusStep = 1;
-        if (r.Status == ReservationStatus.Confirmed) statusStep = 2;
-        else if (r.Status == ReservationStatus.CheckedIn) statusStep = 3;
-        else if (r.Status == ReservationStatus.CheckedOut) statusStep = 4;
-        else if (r.Status == ReservationStatus.Cancelled || r.Status == ReservationStatus.NoShow) statusStep = 0;
+        // --- Construcción del DTO Final ---
+        var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+        
+        // Calcular Status Step visual
+        int statusStep = r.Status switch
+        {
+            ReservationStatus.Confirmed => 2,
+            ReservationStatus.CheckedIn => 3,
+            ReservationStatus.CheckedOut => 4,
+            ReservationStatus.Cancelled or ReservationStatus.NoShow => 0,
+            _ => 1 // Pending
+        };
 
-        var dto = new ReservationDto
+        return Ok(new ReservationDto
         {
             Id = r.Id,
             Code = r.ConfirmationCode,
@@ -157,13 +182,13 @@ public class ReservationsController : ControllerBase
             StatusStep = statusStep,
             
             RoomId = mainSegment?.Room?.Number ?? "?", 
-            RoomName = mainSegment?.Room.Category ?? "Habitación",
+            RoomName = mainSegment?.Room?.Category ?? "Habitación",
             
             MainGuestId = r.GuestId,
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
             CheckOut = r.CheckOut,
-            Nights = (r.CheckOut.Date - r.CheckIn.Date).Days == 0 ? 1 : (r.CheckOut.Date - r.CheckIn.Date).Days,
+            Nights = (r.CheckOut.Date - r.CheckIn.Date).Days > 0 ? (r.CheckOut.Date - r.CheckIn.Date).Days : 1,
             Adults = r.Adults,
             Children = r.Children,
             CreatedDate = r.CreatedAt.DateTime,
@@ -181,9 +206,8 @@ public class ReservationsController : ControllerBase
                 End = s.CheckOut
             }).ToList(),
             
-            Guests = guestsList,
+            Guests = guestsList, // ¡Lista corregida!
             
-            // 4. SOLUCIÓN FINANZAS
             FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
             {
                 Id = t.Id,
@@ -193,17 +217,16 @@ public class ReservationsController : ControllerBase
                 Price = t.Amount, 
                 Total = t.Amount
             }).ToList() ?? new List<FolioItemDto>()
-        };
-
-        return Ok(dto);
+        });
     }
 
     // ==========================================
-    // CREATE: RESERVA MANUAL
+    // CREATE: RESERVA MANUAL (CORREGIDO)
     // ==========================================
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
+        // A. Validar Habitación y Calcular Precios
         var room = await _context.Rooms
             .Include(r => r.PriceOverrides)
             .FirstOrDefaultAsync(r => r.Id == dto.RoomId);
@@ -229,25 +252,82 @@ public class ReservationsController : ControllerBase
             }
         }
 
+        // B. Manejo de Huésped (Upsert y Bloqueos)
         Guest? guest = null;
-        if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
+
+        // Caso Especial: BLOQUEO o MANTENIMIENTO
+        if (dto.Status == "Blocked" || dto.Status == "Maintenance")
         {
-            guest = await _guestRepository.GetByIdAsync(guestId);
-        }
-        
-        if (guest == null)
-        {
-            guest = new Guest
+            guest = await _guestRepository.GetByDocumentAsync("SYS-BLOCK");
+            if (guest == null)
             {
-                FirstName = dto.MainGuestName ?? "Huésped General",
-                LastName = "",
-                DocumentType = IdType.CC,
-                DocumentNumber = "PENDING-" + Guid.NewGuid().ToString().Substring(0, 4),
-                CreatedAt = DateTimeOffset.UtcNow
-            };
-            await _guestRepository.AddAsync(guest);
+                guest = new Guest
+                {
+                    FirstName = "BLOQUEO",
+                    LastName = "SISTEMA",
+                    DocumentType = IdType.CC,
+                    DocumentNumber = "SYS-BLOCK",
+                    Nationality = "System",
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                await _guestRepository.AddAsync(guest);
+            }
+        }
+        else 
+        {
+            // 1. Intentar buscar por ID si viene
+            if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
+            {
+                guest = await _guestRepository.GetByIdAsync(guestId);
+            }
+            
+            // 2. Si no, intentar buscar por Documento (Evitar duplicados)
+            if (guest == null && !string.IsNullOrEmpty(dto.GuestDocNumber))
+            {
+                guest = await _guestRepository.GetByDocumentAsync(dto.GuestDocNumber);
+            }
+            
+            // 3. Si sigue siendo null, CREARLO con todos los datos
+            if (guest == null)
+            {
+                // Parseo de fecha seguro (el código de arriba)
+                DateOnly? birthDateParsed = null;
+                if (!string.IsNullOrEmpty(dto.GuestBirthDate))
+                {
+                    var datePart = dto.GuestBirthDate.Split('T')[0]; 
+                    DateOnly.TryParse(datePart, out var bd);
+                    birthDateParsed = bd;
+                }
+
+                guest = new Guest
+                {
+                    // Usamos los campos específicos que enviaste desde el modal
+                    FirstName = $"{dto.GuestFirstName} {dto.GuestSecondName}".Trim(),
+                    LastName = $"{dto.GuestLastName} {dto.GuestSecondLastName}".Trim(),
+        
+                    DocumentType = Enum.TryParse<IdType>(dto.GuestDocType, out var dt) ? dt : IdType.CC,
+                    DocumentNumber = !string.IsNullOrEmpty(dto.GuestDocNumber) ? dto.GuestDocNumber : "PEND-" + Guid.NewGuid().ToString()[..4],
+        
+                    Email = dto.GuestEmail ?? "",
+                    Phone = dto.GuestPhone ?? "",
+                    Nationality = "Colombia", // O recibirlo del DTO
+                    BirthDate = birthDateParsed,
+                    CityOfOrigin = dto.GuestCityOrigin,
+                    
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                await _guestRepository.AddAsync(guest);
+            }
+            else 
+            {
+                // Opcional: Actualizar datos si el huésped ya existía pero queremos refrescar info
+                if (!string.IsNullOrEmpty(dto.GuestEmail)) guest.Email = dto.GuestEmail;
+                if (!string.IsNullOrEmpty(dto.GuestPhone)) guest.Phone = dto.GuestPhone;
+                await _context.SaveChangesAsync();
+            }
         }
 
+        // C. Crear Reserva
         var reservation = new Reservation
         {
             GuestId = guest.Id,
@@ -272,11 +352,12 @@ public class ReservationsController : ControllerBase
 
         await _repository.CreateAsync(reservation);
 
+        // D. Notificar
         if (reservation.Status != ReservationStatus.Blocked)
         {
             await _notificationRepository.AddAsync(
-                "Nueva Reserva Manual",
-                $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName} por {calculatedTotal:C}",
+                "Nueva Reserva",
+                $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}",
                 NotificationType.Success,
                 $"/reservas/{reservation.Id}"
             );
@@ -478,30 +559,28 @@ public class ReservationsController : ControllerBase
     [HttpPut("{id}/guests")]
     public async Task<IActionResult> UpdateGuestInfo(Guid id, [FromBody] UpdateCheckInGuestDto dto)
     {
-        // Usamos _context directamente para incluir las relaciones necesarias
         var reservation = await _context.Reservations
             .Include(r => r.Guest)
-            .Include(r => r.ReservationGuests) 
+            .Include(r => r.ReservationGuests).ThenInclude(rg => rg.Guest)
             .FirstOrDefaultAsync(r => r.Id == id);
 
         if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
-        if (reservation.Guest == null) return NotFound(new { message = "El huésped titular no existe en la reserva." });
+        if (reservation.Guest == null) return NotFound(new { message = "El huésped titular no existe (Error de integridad)." });
 
-        // Actualizar Titular
-        var mainGuest = reservation.Guest;
-        mainGuest.FirstName = dto.PrimerNombre;
-        mainGuest.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
-        mainGuest.DocumentNumber = dto.NumeroId;
-        mainGuest.Nationality = dto.Nacionalidad;
-        mainGuest.Phone = dto.Telefono ?? mainGuest.Phone;
-        mainGuest.Email = dto.Correo ?? mainGuest.Email;
+        // 1. ACTUALIZAR TITULAR (Merge de datos)
+        // Combinamos Primer y Segundo nombre/apellido para guardar en el campo único de BD
+        var g = reservation.Guest;
+        g.FirstName = $"{dto.PrimerNombre} {dto.SegundoNombre}".Trim(); 
+        g.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
+        g.DocumentNumber = dto.NumeroId;
+        g.Nationality = dto.Nacionalidad;
         
-        if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum))
-        {
-            mainGuest.DocumentType = typeEnum;
-        }
+        // Actualizar solo si hay datos nuevos (no borrar lo existente si viene nulo)
+        if (!string.IsNullOrEmpty(dto.Telefono)) g.Phone = dto.Telefono;
+        if (!string.IsNullOrEmpty(dto.Correo)) g.Email = dto.Correo;
+        if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum)) g.DocumentType = typeEnum;
 
-        // Procesar Firma Digital (Guardado simple en Notas por ahora)
+        // 2. FIRMA DIGITAL
         if (!string.IsNullOrEmpty(dto.SignatureBase64))
         {
             if (reservation.Notes == null) reservation.Notes = "";
@@ -511,9 +590,10 @@ public class ReservationsController : ControllerBase
             }
         }
 
-        // Gestión de Acompañantes
+        // 3. GESTIÓN DE ACOMPAÑANTES (Full Sync)
         if (dto.Companions != null)
         {
+            // Limpiar lista actual para evitar duplicados en la relación
             if (reservation.ReservationGuests.Any())
             {
                 _context.ReservationGuests.RemoveRange(reservation.ReservationGuests);
@@ -523,6 +603,7 @@ public class ReservationsController : ControllerBase
             {
                 if (string.IsNullOrWhiteSpace(compDto.NumeroId)) continue;
 
+                // Lógica UPSERT para Acompañante
                 var existingGuest = await _context.Guests
                     .FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
 
@@ -530,7 +611,7 @@ public class ReservationsController : ControllerBase
                 {
                     existingGuest = new Guest
                     {
-                        FirstName = compDto.PrimerNombre,
+                        FirstName = $"{compDto.PrimerNombre} {compDto.SegundoNombre}".Trim(),
                         LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim(),
                         DocumentNumber = compDto.NumeroId,
                         Nationality = compDto.Nacionalidad,
@@ -541,8 +622,10 @@ public class ReservationsController : ControllerBase
                 }
                 else
                 {
-                    existingGuest.FirstName = compDto.PrimerNombre;
+                    // Si ya existe, actualizamos sus nombres para corregir errores tipográficos
+                    existingGuest.FirstName = $"{compDto.PrimerNombre} {compDto.SegundoNombre}".Trim();
                     existingGuest.LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim();
+                    if (!string.IsNullOrEmpty(compDto.Nacionalidad)) existingGuest.Nationality = compDto.Nacionalidad;
                 }
 
                 reservation.ReservationGuests.Add(new ReservationGuest
@@ -555,8 +638,7 @@ public class ReservationsController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
-        
-        return Ok(new { message = "Información actualizada correctamente." });
+        return Ok(new { message = "Información de huéspedes actualizada correctamente." });
     }
 
     [HttpPost("{id}/checkout")]

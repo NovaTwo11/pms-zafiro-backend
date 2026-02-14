@@ -30,6 +30,7 @@ public class GuestRepository : IGuestRepository
     public async Task<Guest?> GetByIdAsync(Guid id)
     {
         return await _context.Guests.FindAsync(id);
+        
     }
 
     public async Task<Guest?> GetByDocumentAsync(string documentNumber)
@@ -46,8 +47,8 @@ public class GuestRepository : IGuestRepository
 
     public async Task UpdateAsync(Guest guest)
     {
-        _context.Guests.Update(guest);
-        await _context.SaveChangesAsync();
+        _context.Entry(guest).State = EntityState.Modified;
+        await _context.SaveChangesAsync();        
     }
 
     public async Task DeleteAsync(Guid id)

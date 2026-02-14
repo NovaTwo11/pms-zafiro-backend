@@ -20,4 +20,5 @@ public class Guest
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public string? CityOfOrigin { get; set; }
 }
