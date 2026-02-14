@@ -35,6 +35,35 @@ public class ReservationsController : ControllerBase
         _guestRepository = guestRepository;
         _context = context;
     }
+    
+    // ==========================================
+    // 1. ENDPOINT: Garantizar Folio (Pagos Pre-Checkin)
+    // ==========================================
+    [HttpPost("{id}/ensure-folio")]
+    public async Task<IActionResult> EnsureFolio(Guid id)
+    {
+        var reservation = await _repository.GetByIdAsync(id);
+        if (reservation == null) return NotFound("Reserva no encontrada");
+
+        // Verificar si ya existe folio
+        var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
+        if (existingFolio != null) 
+            return Ok(new { folioId = existingFolio.Id, message = "Folio ya existente." });
+
+        // Crear Folio "Pre-Stay"
+        var folio = new GuestFolio
+        {
+            ReservationId = id,
+            Status = FolioStatus.Open,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        // Guardar usando el contexto directamente
+        _context.Folios.Add(folio);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { folioId = folio.Id, message = "Folio anticipado creado." });
+    }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReservationDto>>> GetAll()
@@ -48,7 +77,6 @@ public class ReservationsController : ControllerBase
     {
         var r = await _context.Reservations
             .Include(x => x.Guest)
-            // 1. SOLUCIÓN HUÉSPEDES: Descomentar cuando agregues la colección ReservationGuests a la Entidad
             .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
             .Include(x => x.Segments).ThenInclude(s => s.Room)
             .FirstOrDefaultAsync(x => x.Id == id);
@@ -76,9 +104,13 @@ public class ReservationsController : ControllerBase
         // Agregar titular
         if (r.Guest != null)
         {
+            // Determinar si está firmado (si hay firma en notas o campo específico)
+            // Asumimos que la firma se marca con "[FIRMADO]" en notas por ahora si no hay campo específico
+            bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
+
             guestsList.Add(new GuestDetailDto
             {
-                Id = r.Guest.Id.ToString(), // GuestDetailDto usa string, aquí SÍ va ToString()
+                Id = r.Guest.Id.ToString(), 
                 PrimerNombre = r.Guest.FirstName,
                 PrimerApellido = r.Guest.LastName,
                 Correo = r.Guest.Email,
@@ -87,11 +119,11 @@ public class ReservationsController : ControllerBase
                 NumeroId = r.Guest.DocumentNumber,
                 Nacionalidad = r.Guest.Nationality,
                 EsTitular = true,
-                IsSigned = r.Status >= ReservationStatus.CheckedIn 
+                IsSigned = isSigned 
             });
         }
 
-        // 1.1 SOLUCIÓN HUÉSPEDES: Lógica preparada (Comentada para que compile)
+        // Agregar acompañantes
         if (r.ReservationGuests != null)
         {
             foreach (var rg in r.ReservationGuests)
@@ -105,7 +137,7 @@ public class ReservationsController : ControllerBase
                     NumeroId = rg.Guest.DocumentNumber,
                     Nacionalidad = rg.Guest.Nationality,
                     EsTitular = false,
-                    IsSigned = true 
+                    IsSigned = true // Acompañantes asumen firma del titular o proceso simple
                 });
             }
         } 
@@ -127,7 +159,7 @@ public class ReservationsController : ControllerBase
             RoomId = mainSegment?.Room?.Number ?? "?", 
             RoomName = mainSegment?.Room.Category ?? "Habitación",
             
-            MainGuestId = r.GuestId, // GUID directo (sin ToString)
+            MainGuestId = r.GuestId,
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
             CheckOut = r.CheckOut,
@@ -139,7 +171,7 @@ public class ReservationsController : ControllerBase
             TotalAmount = r.TotalAmount,
             PaidAmount = paidAmount,
             Balance = balance,
-            FolioId = folio?.Id, // GUID nullable directo (sin ToString)
+            FolioId = folio?.Id, 
             
             Segments = r.Segments.Select(s => new ReservationSegmentDto
             {
@@ -154,7 +186,7 @@ public class ReservationsController : ControllerBase
             // 4. SOLUCIÓN FINANZAS
             FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
             {
-                Id = t.Id, // GUID directo (sin ToString)
+                Id = t.Id,
                 Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 Concept = t.Description ?? "Movimiento",
                 Qty = 1,
@@ -339,6 +371,7 @@ public class ReservationsController : ControllerBase
     [HttpPost("{id}/checkin")]
     public async Task<IActionResult> CheckIn(Guid id)
     {
+        // 1. Cargar datos necesarios
         var reservation = await _context.Reservations
             .Include(r => r.Guest)
             .Include(r => r.Segments)
@@ -346,43 +379,85 @@ public class ReservationsController : ControllerBase
             
         if (reservation == null) return NotFound("Reserva no encontrada");
 
+        // 2. Validaciones de negocio
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest($"La reserva está en estado {reservation.Status}, no se puede hacer Check-in.");
 
         var firstSegment = reservation.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
-        if (firstSegment == null) return BadRequest("La reserva no tiene habitación asignada (segmentos).");
+        if (firstSegment == null) return BadRequest("Sin habitación asignada.");
 
         var room = await _roomRepository.GetByIdAsync(firstSegment.RoomId);
-        if (room == null) return BadRequest("La habitación asignada no existe.");
+        if (room == null) return BadRequest("Habitación no encontrada.");
         
         if (room.Status == RoomStatus.Maintenance || room.Status == RoomStatus.Blocked)
-            return BadRequest($"La habitación {room.Number} está en {room.Status} y no puede ocuparse.");
+            return BadRequest($"Habitación {room.Number} no disponible ({room.Status}).");
 
+        // 3. Actualizar Estados
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckIn = DateTime.UtcNow; 
-        
         room.Status = RoomStatus.Occupied;
 
-        var existingFolio = await _folioRepository.GetByReservationIdAsync(id);
-        if (existingFolio != null) 
-            return BadRequest("Ya existe un folio para esta reserva.");
-
-        var folio = new GuestFolio
+        // 4. Gestión del Folio
+        // Usamos .OfType<GuestFolio>() para evitar el error de compilación y acceder a ReservationId
+        var folio = await _context.Folios
+                                  .OfType<GuestFolio>()
+                                  .Include(f => f.Transactions)
+                                  .FirstOrDefaultAsync(f => f.ReservationId == id);
+        
+        // Si no existe, lo creamos
+        if (folio == null)
         {
-            ReservationId = id,
-            Status = FolioStatus.Open,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+             folio = new GuestFolio
+             {
+                 Id = Guid.NewGuid(),
+                 ReservationId = id,
+                 Status = FolioStatus.Open,
+                 CreatedAt = DateTimeOffset.UtcNow
+             };
+             // Importante: Agregamos el folio al contexto inmediatamente
+             _context.Folios.Add(folio);
+        }
+
+        // 5. GENERAR CARGO AUTOMÁTICO DE ALOJAMIENTO (Solución Directa)
+        
+        // Verificamos si ya existe el cargo para no duplicarlo
+        // Nota: Verificamos en BD o en la lista local si acabamos de cargarlo
+        bool chargeExists = folio.Transactions != null && 
+                            folio.Transactions.Any(t => t.Type == TransactionType.Charge && t.Description.Contains("Alojamiento"));
+        
+        if (!chargeExists)
+        {
+            // Creamos la transacción explícita
+            var roomCharge = new FolioTransaction
+            {
+                Id = Guid.NewGuid(),
+                FolioId = folio.Id, // Vinculación directa por ID (Más segura que por navegación)
+                Amount = reservation.TotalAmount, 
+                Description = $"Cargo por Alojamiento (Total Estadía) - Hab {room.Number}",
+                Type = TransactionType.Charge, // Asegúrate que tu Enum tenga Charge=0
+                Quantity = 1,
+                UnitPrice = reservation.TotalAmount,
+                PaymentMethod = PaymentMethod.None,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedByUserId = "SYSTEM"
+            };
+            
+            // AGREGAR DIRECTAMENTE AL DBSET DE TRANSACCIONES
+            // Esto fuerza a EF a insertar el registro sin depender del estado del objeto Folio
+            _context.Set<FolioTransaction>().Add(roomCharge);
+        }
 
         try 
         {
-            await _repository.ProcessCheckInAsync(reservation, room, folio);
+            // 6. Guardar todo
+            await _context.SaveChangesAsync();
             
+            // Notificación
             await _notificationRepository.AddAsync(
                 "Check-in Exitoso",
                 $"Huésped {reservation.Guest?.FullName} en habitación {room.Number}",
                 NotificationType.Success,
-                $"/folios/{folio.Id}"
+                $"/folios?id={folio.Id}"
             );
 
             return Ok(new { 
@@ -393,34 +468,95 @@ public class ReservationsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, "Error interno al procesar el Check-in: " + ex.Message);
+            return StatusCode(500, "Error interno al procesar Check-in: " + ex.Message);
         }
     }
     
+    // ==========================================
+    // 2. ACTUALIZADO: Manejo de Firma y Acompañantes
+    // ==========================================
     [HttpPut("{id}/guests")]
     public async Task<IActionResult> UpdateGuestInfo(Guid id, [FromBody] UpdateCheckInGuestDto dto)
     {
-        var reservation = await _repository.GetByIdAsync(id);
+        // Usamos _context directamente para incluir las relaciones necesarias
+        var reservation = await _context.Reservations
+            .Include(r => r.Guest)
+            .Include(r => r.ReservationGuests) 
+            .FirstOrDefaultAsync(r => r.Id == id);
+
         if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
+        if (reservation.Guest == null) return NotFound(new { message = "El huésped titular no existe en la reserva." });
 
-        var guest = await _guestRepository.GetByIdAsync(reservation.GuestId);
-        if (guest == null) return NotFound(new { message = "El huésped titular no existe." });
-
-        guest.FirstName = dto.PrimerNombre;
-        guest.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
-        guest.DocumentNumber = dto.NumeroId;
-        guest.Nationality = dto.Nacionalidad;
-        guest.Phone = dto.Telefono ?? guest.Phone;
-        guest.Email = dto.Correo ?? guest.Email;
+        // Actualizar Titular
+        var mainGuest = reservation.Guest;
+        mainGuest.FirstName = dto.PrimerNombre;
+        mainGuest.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
+        mainGuest.DocumentNumber = dto.NumeroId;
+        mainGuest.Nationality = dto.Nacionalidad;
+        mainGuest.Phone = dto.Telefono ?? mainGuest.Phone;
+        mainGuest.Email = dto.Correo ?? mainGuest.Email;
         
         if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum))
         {
-            guest.DocumentType = typeEnum;
+            mainGuest.DocumentType = typeEnum;
         }
 
-        await _guestRepository.UpdateAsync(guest);
+        // Procesar Firma Digital (Guardado simple en Notas por ahora)
+        if (!string.IsNullOrEmpty(dto.SignatureBase64))
+        {
+            if (reservation.Notes == null) reservation.Notes = "";
+            if (!reservation.Notes.Contains("[FIRMADO]"))
+            {
+                reservation.Notes += $" [FIRMADO: {DateTime.UtcNow:dd/MM/yyyy HH:mm}]";
+            }
+        }
+
+        // Gestión de Acompañantes
+        if (dto.Companions != null)
+        {
+            if (reservation.ReservationGuests.Any())
+            {
+                _context.ReservationGuests.RemoveRange(reservation.ReservationGuests);
+            }
+
+            foreach (var compDto in dto.Companions)
+            {
+                if (string.IsNullOrWhiteSpace(compDto.NumeroId)) continue;
+
+                var existingGuest = await _context.Guests
+                    .FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
+
+                if (existingGuest == null)
+                {
+                    existingGuest = new Guest
+                    {
+                        FirstName = compDto.PrimerNombre,
+                        LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim(),
+                        DocumentNumber = compDto.NumeroId,
+                        Nationality = compDto.Nacionalidad,
+                        DocumentType = Enum.TryParse<IdType>(compDto.TipoId, out var t) ? t : IdType.CC,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    };
+                    _context.Guests.Add(existingGuest);
+                }
+                else
+                {
+                    existingGuest.FirstName = compDto.PrimerNombre;
+                    existingGuest.LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim();
+                }
+
+                reservation.ReservationGuests.Add(new ReservationGuest
+                {
+                    ReservationId = reservation.Id,
+                    Guest = existingGuest,
+                    IsPrincipal = false
+                });
+            }
+        }
+
+        await _context.SaveChangesAsync();
         
-        return Ok(new { message = "Información del huésped actualizada correctamente." });
+        return Ok(new { message = "Información actualizada correctamente." });
     }
 
     [HttpPost("{id}/checkout")]

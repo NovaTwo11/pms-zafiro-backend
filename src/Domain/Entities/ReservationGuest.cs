@@ -12,4 +12,6 @@ public class ReservationGuest
 
     // Opcional: Para saber si este acompañante ya firmó o hizo check-in individual
     public bool IsCheckedIn { get; set; } = false;
+    
+    public bool IsPrincipal { get; set; }
 }
