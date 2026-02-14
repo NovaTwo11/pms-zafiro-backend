@@ -79,173 +79,150 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-public async Task<ActionResult<ReservationDto>> GetById(Guid id)
-{
-    var r = await _context.Reservations
-        .Include(x => x.Guest)
-        .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
-        .Include(x => x.Segments).ThenInclude(s => s.Room)
-        .FirstOrDefaultAsync(x => x.Id == id);
-
-    if (r == null) return NotFound();
-
-    // --- Lógica Financiera (Folio y Balance) ---
-    var folio = await _context.Folios.OfType<GuestFolio>()
-        .Include(f => f.Transactions)
-        .FirstOrDefaultAsync(f => f.ReservationId == id);
-
-    var paidAmount = folio?.Transactions
-        .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
-        .Sum(t => Math.Abs(t.Amount)) ?? 0;
-
-    var charges = folio?.Transactions
-        .Where(t => t.Type == TransactionType.Charge || t.Type == TransactionType.Expense)
-        .Sum(t => t.Amount) ?? 0;
-        
-    // CORRECCIÓN 1: El total será igual a los cargos consolidados. 
-    // Si la reserva no tiene cargos aún (ej: recién hecha), usa el estimado base.
-    var realTotal = charges > 0 ? charges : r.TotalAmount;
-    var balance = realTotal - paidAmount;
-
-    // CORRECCIÓN 2: Si está pendiente pero detectamos dinero abonado, la confirmamos.
-    if (r.Status == ReservationStatus.Pending && paidAmount > 0)
+    public async Task<ActionResult<ReservationDto>> GetById(Guid id)
     {
-        r.Status = ReservationStatus.Confirmed;
-        await _context.SaveChangesAsync(); 
-    }
+        var r = await _context.Reservations
+            .Include(x => x.Guest)
+            .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
+            .Include(x => x.Segments).ThenInclude(s => s.Room)
+            .FirstOrDefaultAsync(x => x.Id == id);
 
-    // --- Helper Local para Nombres ---
-    // Separa "Juan Carlos" en "Juan" y "Carlos" para que el frontend no se rompa
-    (string p, string s) SplitName(string fullName)
-    {
-        if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
-        var parts = fullName.Trim().Split(' ', 2);
-        return (parts[0], parts.Length > 1 ? parts[1] : "");
-    }
+        if (r == null) return NotFound();
 
-    var guestsList = new List<GuestDetailDto>();
+        // --- Lógica Financiera (Folio y Balance) ---
+        var folio = await _context.Folios.OfType<GuestFolio>()
+            .Include(f => f.Transactions)
+            .FirstOrDefaultAsync(f => f.ReservationId == id);
 
-    // 1. Mapeo del Titular (Datos Completos)
-    if (r.Guest != null)
-    {
-        var (nom1, nom2) = SplitName(r.Guest.FirstName);
-        var (ape1, ape2) = SplitName(r.Guest.LastName);
-        
-        // Detectar firma en las notas
-        bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
+        var paidAmount = folio?.Transactions
+            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+            .Sum(t => Math.Abs(t.Amount)) ?? 0;
 
-        guestsList.Add(new GuestDetailDto
+        var charges = folio?.Transactions
+            .Where(t => t.Type == TransactionType.Charge || t.Type == TransactionType.Expense)
+            .Sum(t => t.Amount) ?? 0;
+            
+        var realTotal = charges > 0 ? charges : r.TotalAmount;
+        var balance = realTotal - paidAmount;
+
+        if (r.Status == ReservationStatus.Pending && paidAmount > 0)
         {
-            Id = r.Guest.Id.ToString(),
-            PrimerNombre = nom1,
-            SegundoNombre = nom2,
-            PrimerApellido = ape1,
-            SegundoApellido = ape2,
-            Correo = r.Guest.Email,
-            Telefono = r.Guest.Phone,
-            TipoId = r.Guest.DocumentType.ToString(),
-            NumeroId = r.Guest.DocumentNumber,
-            Nacionalidad = r.Guest.Nationality,
-            FechaNacimiento = r.Guest.BirthDate?.ToDateTime(TimeOnly.MinValue),
-            EsTitular = true,
-            IsSigned = isSigned 
-        });
-    }
+            r.Status = ReservationStatus.Confirmed;
+            await _context.SaveChangesAsync(); 
+        }
 
-    // 2. Mapeo de Acompañantes (Datos Básicos)
-    if (r.ReservationGuests != null)
-    {
-        foreach (var rg in r.ReservationGuests)
+        // --- Helper Local para Nombres ---
+        (string p, string s) SplitName(string fullName)
         {
-            if (rg.Guest == null) continue;
-            var (n1, n2) = SplitName(rg.Guest.FirstName);
-            var (a1, a2) = SplitName(rg.Guest.LastName);
+            if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
+            var parts = fullName.Trim().Split(' ', 2);
+            return (parts[0], parts.Length > 1 ? parts[1] : "");
+        }
+
+        var guestsList = new List<GuestDetailDto>();
+
+        if (r.Guest != null)
+        {
+            var (nom1, nom2) = SplitName(r.Guest.FirstName);
+            var (ape1, ape2) = SplitName(r.Guest.LastName);
+            bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
 
             guestsList.Add(new GuestDetailDto
             {
-                Id = rg.Guest.Id.ToString(),
-                PrimerNombre = n1,
-                SegundoNombre = n2,
-                PrimerApellido = a1,
-                SegundoApellido = a2,
-                TipoId = rg.Guest.DocumentType.ToString(),
-                NumeroId = rg.Guest.DocumentNumber,
-                Nacionalidad = rg.Guest.Nationality,
-                EsTitular = false,
-                IsSigned = true // Acompañantes asumen estado OK por simplicidad
+                Id = r.Guest.Id.ToString(),
+                PrimerNombre = nom1,
+                SegundoNombre = nom2,
+                PrimerApellido = ape1,
+                SegundoApellido = ape2,
+                Correo = r.Guest.Email,
+                Telefono = r.Guest.Phone,
+                TipoId = r.Guest.DocumentType.ToString(),
+                NumeroId = r.Guest.DocumentNumber,
+                Nacionalidad = r.Guest.Nationality,
+                FechaNacimiento = r.Guest.BirthDate?.ToDateTime(TimeOnly.MinValue),
+                EsTitular = true,
+                IsSigned = isSigned 
             });
         }
-    } 
 
-    // --- Construcción del DTO Final ---
-    var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
-    
-    // Calcular Status Step visual
-    int statusStep = r.Status switch
-    {
-        ReservationStatus.Confirmed => 2,
-        ReservationStatus.CheckedIn => 3,
-        ReservationStatus.CheckedOut => 4,
-        ReservationStatus.Cancelled or ReservationStatus.NoShow => 0,
-        _ => 1 // Pending
-    };
-
-    return Ok(new ReservationDto
-    {
-        Id = r.Id,
-        Code = r.ConfirmationCode,
-        Status = r.Status.ToString(),
-        StatusStep = statusStep,
-        
-        RoomId = mainSegment?.Room?.Number ?? "?", 
-        RoomName = mainSegment?.Room?.Category ?? "Habitación",
-        
-        MainGuestId = r.GuestId,
-        MainGuestName = r.Guest?.FullName ?? "Desconocido",
-        CheckIn = r.CheckIn,
-        CheckOut = r.CheckOut,
-        Nights = (r.CheckOut.Date - r.CheckIn.Date).Days > 0 ? (r.CheckOut.Date - r.CheckIn.Date).Days : 1,
-        Adults = r.Adults,
-        Children = r.Children,
-        CreatedDate = r.CreatedAt.DateTime,
-        Notes = r.Notes ?? "",
-        
-        // CORRECCIÓN 3: Pasar el total y balance calculados al DTO
-        TotalAmount = realTotal, 
-        PaidAmount = paidAmount,
-        Balance = balance,
-        
-        FolioId = folio?.Id, 
-        
-        Segments = r.Segments.Select(s => new ReservationSegmentDto
+        if (r.ReservationGuests != null)
         {
-            RoomId = s.RoomId,
-            RoomNumber = s.Room?.Number ?? "?",
-            Start = s.CheckIn,
-            End = s.CheckOut
-        }).ToList(),
-        
-        Guests = guestsList, // ¡Lista corregida!
-        
-        FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
-        {
-            Id = t.Id,
-            Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
-            Concept = t.Description ?? "Movimiento",
-            Qty = 1,
-            Price = t.Amount, 
-            Total = t.Amount
-        }).ToList() ?? new List<FolioItemDto>()
-    });
-}
+            foreach (var rg in r.ReservationGuests)
+            {
+                if (rg.Guest == null) continue;
+                var (n1, n2) = SplitName(rg.Guest.FirstName);
+                var (a1, a2) = SplitName(rg.Guest.LastName);
 
-    // ==========================================
-    // CREATE: RESERVA MANUAL (CORREGIDO)
-    // ==========================================
+                guestsList.Add(new GuestDetailDto
+                {
+                    Id = rg.Guest.Id.ToString(),
+                    PrimerNombre = n1,
+                    SegundoNombre = n2,
+                    PrimerApellido = a1,
+                    SegundoApellido = a2,
+                    TipoId = rg.Guest.DocumentType.ToString(),
+                    NumeroId = rg.Guest.DocumentNumber,
+                    Nacionalidad = rg.Guest.Nationality,
+                    EsTitular = false,
+                    IsSigned = true 
+                });
+            }
+        } 
+
+        var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+        int statusStep = r.Status switch
+        {
+            ReservationStatus.Confirmed => 2,
+            ReservationStatus.CheckedIn => 3,
+            ReservationStatus.CheckedOut => 4,
+            ReservationStatus.Cancelled or ReservationStatus.NoShow => 0,
+            _ => 1 
+        };
+
+        return Ok(new ReservationDto
+        {
+            Id = r.Id,
+            Code = r.ConfirmationCode,
+            Status = r.Status.ToString(),
+            StatusStep = statusStep,
+            RoomId = mainSegment?.Room?.Number ?? "?", 
+            RoomName = mainSegment?.Room?.Category ?? "Habitación",
+            MainGuestId = r.GuestId,
+            MainGuestName = r.Guest?.FullName ?? "Desconocido",
+            CheckIn = r.CheckIn,
+            CheckOut = r.CheckOut,
+            Nights = (r.CheckOut.Date - r.CheckIn.Date).Days > 0 ? (r.CheckOut.Date - r.CheckIn.Date).Days : 1,
+            Adults = r.Adults,
+            Children = r.Children,
+            CreatedDate = r.CreatedAt.DateTime,
+            Notes = r.Notes ?? "",
+            TotalAmount = realTotal, 
+            PaidAmount = paidAmount,
+            Balance = balance,
+            FolioId = folio?.Id, 
+            Segments = r.Segments.Select(s => new ReservationSegmentDto
+            {
+                RoomId = s.RoomId,
+                RoomNumber = s.Room?.Number ?? "?",
+                Start = s.CheckIn,
+                End = s.CheckOut
+            }).ToList(),
+            Guests = guestsList, 
+            FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
+            {
+                Id = t.Id,
+                Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                Concept = t.Description ?? "Movimiento",
+                Qty = 1,
+                Price = t.Amount, 
+                Total = t.Amount
+            }).ToList() ?? new List<FolioItemDto>()
+        });
+    }
+
     [HttpPost]
     public async Task<ActionResult<ReservationDto>> Create(CreateReservationDto dto)
     {
-        // A. Validar Habitación y Calcular Precios
         var room = await _context.Rooms
             .Include(r => r.PriceOverrides)
             .FirstOrDefaultAsync(r => r.Id == dto.RoomId);
@@ -271,10 +248,8 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
             }
         }
 
-        // B. Manejo de Huésped (Upsert y Bloqueos)
         Guest? guest = null;
 
-        // Caso Especial: BLOQUEO o MANTENIMIENTO
         if (dto.Status == "Blocked" || dto.Status == "Maintenance")
         {
             guest = await _guestRepository.GetByDocumentAsync("SYS-BLOCK");
@@ -294,22 +269,14 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         }
         else 
         {
-            // 1. Intentar buscar por ID si viene
             if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
-            {
                 guest = await _guestRepository.GetByIdAsync(guestId);
-            }
             
-            // 2. Si no, intentar buscar por Documento (Evitar duplicados)
             if (guest == null && !string.IsNullOrEmpty(dto.GuestDocNumber))
-            {
                 guest = await _guestRepository.GetByDocumentAsync(dto.GuestDocNumber);
-            }
             
-            // 3. Si sigue siendo null, CREARLO con todos los datos
             if (guest == null)
             {
-                // Parseo de fecha seguro (el código de arriba)
                 DateOnly? birthDateParsed = null;
                 if (!string.IsNullOrEmpty(dto.GuestBirthDate))
                 {
@@ -320,33 +287,27 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
 
                 guest = new Guest
                 {
-                    // Usamos los campos específicos que enviaste desde el modal
                     FirstName = $"{dto.GuestFirstName} {dto.GuestSecondName}".Trim(),
                     LastName = $"{dto.GuestLastName} {dto.GuestSecondLastName}".Trim(),
-        
                     DocumentType = Enum.TryParse<IdType>(dto.GuestDocType, out var dt) ? dt : IdType.CC,
                     DocumentNumber = !string.IsNullOrEmpty(dto.GuestDocNumber) ? dto.GuestDocNumber : "PEND-" + Guid.NewGuid().ToString()[..4],
-        
                     Email = dto.GuestEmail ?? "",
                     Phone = dto.GuestPhone ?? "",
-                    Nationality = "Colombia", // O recibirlo del DTO
+                    Nationality = "Colombia", 
                     BirthDate = birthDateParsed,
                     CityOfOrigin = dto.GuestCityOrigin,
-                    
                     CreatedAt = DateTimeOffset.UtcNow
                 };
                 await _guestRepository.AddAsync(guest);
             }
             else 
             {
-                // Opcional: Actualizar datos si el huésped ya existía pero queremos refrescar info
                 if (!string.IsNullOrEmpty(dto.GuestEmail)) guest.Email = dto.GuestEmail;
                 if (!string.IsNullOrEmpty(dto.GuestPhone)) guest.Phone = dto.GuestPhone;
                 await _context.SaveChangesAsync();
             }
         }
 
-        // C. Crear Reserva
         var reservation = new Reservation
         {
             GuestId = guest.Id,
@@ -371,7 +332,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
 
         await _repository.CreateAsync(reservation);
 
-        // D. Notificar
         if (reservation.Status != ReservationStatus.Blocked)
         {
             await _notificationRepository.AddAsync(
@@ -385,9 +345,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, new { id = reservation.Id, code = reservation.ConfirmationCode });
     }
 
-    // ==========================================
-    // CREATE BOOKING: RESERVA WEB
-    // ==========================================
     [HttpPost("booking")]
     public async Task<ActionResult<ReservationDto>> CreateBooking(CreateBookingRequestDto dto)
     {
@@ -418,9 +375,7 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
 
         Guest? guest = null;
         if (!string.IsNullOrEmpty(dto.DocNumber))
-        {
             guest = await _guestRepository.GetByDocumentAsync(dto.DocNumber);
-        }
 
         if (guest == null)
         {
@@ -471,7 +426,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
     [HttpPost("{id}/checkin")]
     public async Task<IActionResult> CheckIn(Guid id)
     {
-        // 1. Cargar datos necesarios
         var reservation = await _context.Reservations
             .Include(r => r.Guest)
             .Include(r => r.Segments)
@@ -479,7 +433,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
             
         if (reservation == null) return NotFound("Reserva no encontrada");
 
-        // 2. Validaciones de negocio
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             return BadRequest($"La reserva está en estado {reservation.Status}, no se puede hacer Check-in.");
 
@@ -492,19 +445,15 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         if (room.Status == RoomStatus.Maintenance || room.Status == RoomStatus.Blocked)
             return BadRequest($"Habitación {room.Number} no disponible ({room.Status}).");
 
-        // 3. Actualizar Estados
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckIn = DateTime.UtcNow; 
         room.Status = RoomStatus.Occupied;
 
-        // 4. Gestión del Folio
-        // Usamos .OfType<GuestFolio>() para evitar el error de compilación y acceder a ReservationId
         var folio = await _context.Folios
                                   .OfType<GuestFolio>()
                                   .Include(f => f.Transactions)
                                   .FirstOrDefaultAsync(f => f.ReservationId == id);
         
-        // Si no existe, lo creamos
         if (folio == null)
         {
              folio = new GuestFolio
@@ -514,27 +463,21 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
                  Status = FolioStatus.Open,
                  CreatedAt = DateTimeOffset.UtcNow
              };
-             // Importante: Agregamos el folio al contexto inmediatamente
              _context.Folios.Add(folio);
         }
 
-        // 5. GENERAR CARGO AUTOMÁTICO DE ALOJAMIENTO (Solución Directa)
-        
-        // Verificamos si ya existe el cargo para no duplicarlo
-        // Nota: Verificamos en BD o en la lista local si acabamos de cargarlo
         bool chargeExists = folio.Transactions != null && 
                             folio.Transactions.Any(t => t.Type == TransactionType.Charge && t.Description.Contains("Alojamiento"));
         
         if (!chargeExists)
         {
-            // Creamos la transacción explícita
             var roomCharge = new FolioTransaction
             {
                 Id = Guid.NewGuid(),
-                FolioId = folio.Id, // Vinculación directa por ID (Más segura que por navegación)
+                FolioId = folio.Id, 
                 Amount = reservation.TotalAmount, 
                 Description = $"Cargo por Alojamiento (Total Estadía) - Hab {room.Number}",
-                Type = TransactionType.Charge, // Asegúrate que tu Enum tenga Charge=0
+                Type = TransactionType.Charge, 
                 Quantity = 1,
                 UnitPrice = reservation.TotalAmount,
                 PaymentMethod = PaymentMethod.None,
@@ -542,17 +485,13 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
                 CreatedByUserId = "SYSTEM"
             };
             
-            // AGREGAR DIRECTAMENTE AL DBSET DE TRANSACCIONES
-            // Esto fuerza a EF a insertar el registro sin depender del estado del objeto Folio
             _context.Set<FolioTransaction>().Add(roomCharge);
         }
 
         try 
         {
-            // 6. Guardar todo
             await _context.SaveChangesAsync();
             
-            // Notificación
             await _notificationRepository.AddAsync(
                 "Check-in Exitoso",
                 $"Huésped {reservation.Guest?.FullName} en habitación {room.Number}",
@@ -572,9 +511,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         }
     }
     
-    // ==========================================
-    // 2. ACTUALIZADO: Manejo de Firma y Acompañantes
-    // ==========================================
     [HttpPut("{id}/guests")]
     public async Task<IActionResult> UpdateGuestInfo(Guid id, [FromBody] UpdateCheckInGuestDto dto)
     {
@@ -586,7 +522,6 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
         if (reservation.Guest == null) return NotFound(new { message = "El huésped titular no existe (Error de integridad)." });
 
-        // 1. ACTUALIZAR TITULAR
         var g = reservation.Guest;
         g.FirstName = $"{dto.PrimerNombre} {dto.SegundoNombre}".Trim(); 
         g.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
@@ -595,40 +530,32 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         
         if (!string.IsNullOrEmpty(dto.Telefono)) g.Phone = dto.Telefono;
         if (!string.IsNullOrEmpty(dto.Correo)) g.Email = dto.Correo;
-        if (!string.IsNullOrEmpty(dto.CiudadOrigen)) g.CityOfOrigin = dto.CiudadOrigen; // NUEVO
+        if (!string.IsNullOrEmpty(dto.CiudadOrigen)) g.CityOfOrigin = dto.CiudadOrigen; 
         if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum)) g.DocumentType = typeEnum;
 
-        // NUEVO: Procesar Fecha Nacimiento Titular
         if (!string.IsNullOrEmpty(dto.FechaNacimiento))
         {
             var datePart = dto.FechaNacimiento.Split('T')[0]; 
             if (DateOnly.TryParse(datePart, out var bd)) g.BirthDate = bd;
         }
 
-        // 2. FIRMA DIGITAL
         if (!string.IsNullOrEmpty(dto.SignatureBase64))
         {
             if (reservation.Notes == null) reservation.Notes = "";
             if (!reservation.Notes.Contains("[FIRMADO]"))
-            {
                 reservation.Notes += $" [FIRMADO: {DateTime.UtcNow:dd/MM/yyyy HH:mm}]";
-            }
         }
 
-        // 3. GESTIÓN DE ACOMPAÑANTES
         if (dto.Companions != null)
         {
             if (reservation.ReservationGuests.Any())
-            {
                 _context.ReservationGuests.RemoveRange(reservation.ReservationGuests);
-            }
 
             foreach (var compDto in dto.Companions)
             {
                 if (string.IsNullOrWhiteSpace(compDto.NumeroId)) continue;
 
-                var existingGuest = await _context.Guests
-                    .FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
+                var existingGuest = await _context.Guests.FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
 
                 DateOnly? compBirthDate = null;
                 if (!string.IsNullOrEmpty(compDto.FechaNacimiento))
@@ -646,8 +573,8 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
                         DocumentNumber = compDto.NumeroId,
                         Nationality = compDto.Nacionalidad,
                         DocumentType = Enum.TryParse<IdType>(compDto.TipoId, out var t) ? t : IdType.CC,
-                        CityOfOrigin = compDto.CiudadOrigen, // NUEVO
-                        BirthDate = compBirthDate, // NUEVO
+                        CityOfOrigin = compDto.CiudadOrigen, 
+                        BirthDate = compBirthDate, 
                         CreatedAt = DateTimeOffset.UtcNow
                     };
                     _context.Guests.Add(existingGuest);
@@ -657,8 +584,8 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
                     existingGuest.FirstName = $"{compDto.PrimerNombre} {compDto.SegundoNombre}".Trim();
                     existingGuest.LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim();
                     if (!string.IsNullOrEmpty(compDto.Nacionalidad)) existingGuest.Nationality = compDto.Nacionalidad;
-                    if (!string.IsNullOrEmpty(compDto.CiudadOrigen)) existingGuest.CityOfOrigin = compDto.CiudadOrigen; // NUEVO
-                    if (compBirthDate.HasValue) existingGuest.BirthDate = compBirthDate; // NUEVO
+                    if (!string.IsNullOrEmpty(compDto.CiudadOrigen)) existingGuest.CityOfOrigin = compDto.CiudadOrigen; 
+                    if (compBirthDate.HasValue) existingGuest.BirthDate = compBirthDate; 
                 }
 
                 reservation.ReservationGuests.Add(new ReservationGuest
@@ -895,17 +822,61 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
             return BadRequest("Reserva o correo de huésped no encontrado.");
 
         var roomInfo = r.Segments.FirstOrDefault()?.Room?.Number ?? "N/A";
+        
+        // Plantilla HTML profesional
         var body = $@"
-            <h2>Confirmación de Reserva</h2>
-            <p>Hola {r.Guest.FirstName}, su reserva ha sido confirmada con los siguientes detalles:</p>
-            <ul>
-                <li><strong>Código de Reserva:</strong> {r.ConfirmationCode}</li>
-                <li><strong>Habitación:</strong> {roomInfo}</li>
-                <li><strong>Check-in:</strong> {r.CheckIn:dd MMM yyyy}</li>
-                <li><strong>Check-out:</strong> {r.CheckOut:dd MMM yyyy}</li>
-                <li><strong>Total de la Estadía:</strong> {r.TotalAmount:C}</li>
-            </ul>
-            <p>¡Esperamos recibirle pronto!</p>";
+        <div style='font-family: ""Segoe UI"", Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);'>
+            <div style='background-color: #D4AF37; padding: 25px; text-align: center; color: white;'>
+                <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px;'>HOTEL ZAFIRO</h1>
+                <p style='margin: 5px 0 0 0; font-size: 16px; opacity: 0.9;'>Confirmación de Reserva</p>
+            </div>
+            <div style='padding: 30px; background-color: #ffffff; color: #333333;'>
+                <p style='font-size: 16px;'>Estimado/a <strong>{r.Guest.FirstName}</strong>,</p>
+                <p style='font-size: 16px; color: #555;'>Su reserva ha sido confirmada. Nos emociona recibirle pronto. A continuación encontrará los detalles de su estadía:</p>
+                
+                <div style='background-color: #f8f9fa; border-left: 4px solid #D4AF37; padding: 20px; border-radius: 4px; margin: 25px 0;'>
+                    <p style='margin: 8px 0; font-size: 15px;'><strong>Código de Reserva:</strong> <span style='color: #D4AF37; font-size: 18px; font-weight: bold; margin-left: 5px;'>{r.ConfirmationCode}</span></p>
+                    <p style='margin: 8px 0; font-size: 15px;'><strong>Habitación:</strong> {roomInfo}</p>
+                    <p style='margin: 8px 0; font-size: 15px;'><strong>Check-in:</strong> {r.CheckIn:dd MMM yyyy} a partir de las <strong>15:00</strong></p>
+                    <p style='margin: 8px 0; font-size: 15px;'><strong>Check-out:</strong> {r.CheckOut:dd MMM yyyy} hasta las <strong>12:00</strong></p>
+                    <p style='margin: 8px 0; font-size: 15px;'><strong>Total de la Estadía:</strong> <span style='font-size: 16px; font-weight: bold;'>{r.TotalAmount:C}</span></p>
+                </div>
+
+                <h3 style='color: #D4AF37; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; margin-top: 30px;'>Impuestos y cargos adicionales</h3>
+                <ul style='font-size: 14px; color: #555; padding-left: 20px;'>
+                    <li style='margin-bottom: 6px;'>Los niños menores de 5 años pagan el mismo valor de hospedaje sin importar la edad.</li>
+                    <li style='margin-bottom: 6px;'>La tarifa <strong>NO</strong> incluye el Impuesto al Valor Agregado (IVA).</li>
+                </ul>
+
+                <h3 style='color: #D4AF37; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; margin-top: 25px;'>Condiciones del servicio</h3>
+                <ul style='font-size: 14px; color: #555; padding-left: 20px;'>
+                    <li style='margin-bottom: 6px;'>Nuestro motor de reservas te cobrará únicamente el <strong>50%</strong> del valor total de tu reserva para confirmarla. En caso de agregar servicios extra, estos serán cobrados en su totalidad.</li>
+                    <li style='margin-bottom: 6px;'>El valor restante debe cancelarse <strong>en</strong> el hotel al momento de realizar el check-in.</li>
+                </ul>
+
+                <h3 style='color: #D4AF37; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; margin-top: 25px;'>Niños, Niñas y Adolescentes</h3>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>Todos los menores de edad deben presentar su documento de identificación al momento del Check-in y deberán venir acompañados por unos de sus padres o de lo contrario traer la autorización debidamente firmada por sus padres con una copia de sus documentos de identificación.</p>
+
+                <h3 style='color: #D4AF37; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; margin-top: 25px;'>Mascotas</h3>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>No aceptamos mascotas en nuestras instalaciones.</p>
+
+                <h3 style='color: #D4AF37; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; margin-top: 25px;'>Políticas de Cancelación y Reprogramación</h3>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>No realizamos devolución de dinero por cancelación de reserva. Usted podrá reprogramar su(s) reserva(s) sin penalidad, si lo hace al menos 3 días antes de la fecha de llegada, en caso de no hacer uso de su reserva y no haberla reprogramado dentro del tiempo establecido, le será cobrada una penalidad por el valor de la primera noche de alojamiento más impuestos y la totalidad de servicios adicionales reservados.</p>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>Puede reprogramar su reserva contactándonos al teléfono <strong>+57 3202095352</strong> o mediante el correo electrónico <strong>zafirohoteldoradal@gmail.com</strong>.</p>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>Usted podrá reprogramar su reserva únicamente 1 vez y debe cumplir las siguientes condiciones:</p>
+                <ul style='font-size: 14px; color: #555; padding-left: 20px; margin-top: 5px;'>
+                    <li style='margin-bottom: 4px;'>Debe conservar el mismo tipo de habitación.</li>
+                    <li style='margin-bottom: 4px;'>Debe conservar el mismo número de noches, o elegir una cantidad superior.</li>
+                    <li style='margin-bottom: 4px;'>Debe conservar el mismo número de huéspedes.</li>
+                    <li style='margin-bottom: 4px;'>Si aceptamos su solicitud de reprogramación, tiene un plazo máximo de 30 días hábiles para hacer efectiva su reserva.</li>
+                </ul>
+                <p style='font-size: 14px; color: #555; margin: 10px 0;'>Las solicitudes de reprogramación o cesión de reserva a terceros únicamente serán aceptadas si son realizadas por el titular de la reserva.</p>
+            </div>
+            <div style='background-color: #111111; padding: 20px; text-align: center; color: #aaaaaa; font-size: 13px;'>
+                <p style='margin: 0 0 5px 0; color: #ffffff; font-weight: bold; letter-spacing: 1px;'>HOTEL ZAFIRO DORADAL</p>
+                <p style='margin: 0;'>+57 3202095352 • zafirohoteldoradal@gmail.com</p>
+            </div>
+        </div>";
 
         await _emailService.SendEmailAsync(r.Guest.Email, $"Reserva Confirmada #{r.ConfirmationCode}", body);
         return Ok(new { message = "Resumen enviado exitosamente." });
@@ -918,17 +889,188 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         if (r == null || r.Guest == null || string.IsNullOrEmpty(r.Guest.Email)) 
             return BadRequest("Reserva o correo no encontrado.");
 
-        var baseUrl = _config["FrontendUrl"] ?? "http://localhost:3000"; // Asegúrate de configurar esto
+        var baseUrl = _config["FrontendUrl"] ?? "http://localhost:3000"; 
         var link = $"{baseUrl}/guest/check-in/{r.ConfirmationCode ?? r.Id.ToString()}";
 
+        // Plantilla HTML de Alta Conversión para Check-in
         var body = $@"
-            <h2>Agilice su llegada (Check-in Online)</h2>
-            <p>Estimado/a {r.Guest.FirstName},</p>
-            <p>Para hacer más rápido su ingreso al hotel, le invitamos a registrar a sus acompañantes en el siguiente enlace antes de su llegada:</p>
-            <p><a href='{link}' style='padding: 10px 15px; background-color: #059669; color: white; text-decoration: none; border-radius: 5px;'>Completar Check-in Online</a></p>
-            <p>Si el botón no funciona, copie y pegue este enlace en su navegador: <br/>{link}</p>";
+        <div style='font-family: ""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #eaeaea; background-color: #ffffff;'>
+            
+            <div style='background-color: #111111; padding: 35px 20px; text-align: center; border-bottom: 4px solid #D4AF37;'>
+                <h1 style='color: #D4AF37; margin: 0; font-size: 28px; letter-spacing: 3px; text-transform: uppercase;'>HOTEL ZAFIRO</h1>
+                <p style='color: #ffffff; margin: 8px 0 0 0; font-size: 14px; opacity: 0.8; letter-spacing: 1px;'>PRE-REGISTRO DE HUÉSPEDES</p>
+            </div>
 
-        await _emailService.SendEmailAsync(r.Guest.Email, $"Check-in Online - Reserva #{r.ConfirmationCode}", body);
+            <div style='padding: 40px 30px; text-align: center;'>
+                <h2 style='color: #333333; margin-top: 0; font-size: 24px; font-weight: 700;'>¡Su estadía está muy cerca!</h2>
+                <p style='color: #555555; font-size: 16px; line-height: 1.6; margin-bottom: 25px;'>
+                    Estimado/a <strong>{r.Guest.FirstName}</strong>,<br><br>
+                    Queremos que su experiencia con nosotros sea perfecta desde el primer momento. Para evitar filas en recepción y agilizar su ingreso al hotel, le invitamos a completar su <strong>Check-in Online</strong>.
+                </p>
+
+                <div style='background-color: #fdfbf5; border-radius: 8px; padding: 15px; margin-bottom: 30px; border: 1px solid #f3ebd3;'>
+                    <p style='margin: 0; color: #555555; font-size: 15px;'>
+                        Confirmación de Reserva:<br>
+                        <strong style='color: #D4AF37; font-size: 22px; letter-spacing: 2px; display: inline-block; margin-top: 5px;'>#{r.ConfirmationCode}</strong>
+                    </p>
+                </div>
+
+                <a href='{link}' style='display: inline-block; background-color: #059669; color: #ffffff; text-decoration: none; padding: 16px 35px; font-size: 16px; font-weight: bold; border-radius: 6px; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 6px rgba(5, 150, 105, 0.2);'>
+                    Hacer Check-in Online
+                </a>
+
+                <p style='color: #777777; font-size: 14px; margin-top: 35px; line-height: 1.5;'>
+                    En este enlace seguro, podrá confirmar sus datos personales y registrar los documentos de sus acompañantes antes de su llegada.
+                </p>
+                
+                <div style='margin-top: 25px; padding: 15px; background-color: #f5f5f5; border-radius: 6px; text-align: left;'>
+                    <p style='color: #999999; font-size: 12px; margin: 0 0 5px 0;'>¿El botón no funciona? Copie y pegue este enlace en su navegador:</p>
+                    <a href='{link}' style='color: #059669; font-size: 12px; text-decoration: none; word-break: break-all;'>{link}</a>
+                </div>
+            </div>
+
+            <div style='background-color: #f9f9f9; padding: 25px 20px; text-align: center; border-top: 1px solid #eeeeee;'>
+                <p style='color: #333333; font-weight: bold; margin: 0 0 5px 0; font-size: 14px;'>HOTEL ZAFIRO DORADAL</p>
+                <p style='color: #777777; margin: 0 0 15px 0; font-size: 13px;'>+57 3202095352 • zafirohoteldoradal@gmail.com</p>
+                <p style='color: #aaaaaa; margin: 0; font-size: 11px; line-height: 1.4;'>Este es un mensaje generado automáticamente.<br>Por favor, no responda a este correo electrónico.</p>
+            </div>
+        </div>";
+
+        // Asunto más llamativo
+        await _emailService.SendEmailAsync(r.Guest.Email, $"⏳ Agilice su llegada: Check-in Online Reserva #{r.ConfirmationCode}", body);
+        
         return Ok(new { message = "Enlace de check-in enviado exitosamente." });
+    }
+
+    // ==========================================
+    // NUEVOS ENDPOINTS: CHECK-IN ONLINE
+    // ==========================================
+
+    [HttpGet("by-code/{code}")]
+    public async Task<IActionResult> GetReservationByCode(string code)
+    {
+        var reservation = await _context.Reservations
+            .Include(r => r.Guest)
+            .FirstOrDefaultAsync(r => r.ConfirmationCode == code || r.Id.ToString() == code);
+
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada o código inválido." });
+
+        (string p, string s) SplitName(string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
+            var parts = fullName.Trim().Split(' ', 2);
+            return (parts[0], parts.Length > 1 ? parts[1] : "");
+        }
+
+        var (nom1, nom2) = SplitName(reservation.Guest?.FirstName ?? "");
+        var (ape1, ape2) = SplitName(reservation.Guest?.LastName ?? "");
+
+        return Ok(new
+        {
+            id = reservation.Id,
+            confirmationCode = reservation.ConfirmationCode,
+            mainGuest = new {
+                // Mandamos los campos separados para el frontend
+                primerNombre = nom1,
+                segundoNombre = nom2,
+                primerApellido = ape1,
+                segundoApellido = ape2,
+                email = reservation.Guest?.Email,
+                phone = reservation.Guest?.Phone,
+                documentNumber = reservation.Guest?.DocumentNumber,
+                documentType = reservation.Guest?.DocumentType.ToString(),
+                nationality = reservation.Guest?.Nationality,
+                cityOfOrigin = reservation.Guest?.CityOfOrigin,
+                // Formateamos la fecha para que el input type="date" lo entienda (yyyy-MM-dd)
+                birthDate = reservation.Guest?.BirthDate?.ToString("yyyy-MM-dd") 
+            }
+        });
+    }
+
+    [HttpPost("{id}/online-checkin")]
+    public async Task<IActionResult> CompleteOnlineCheckIn(Guid id, [FromBody] OnlineCheckInRequestDto request)
+    {
+        var reservation = await _context.Reservations
+            .Include(r => r.Guest)
+            .Include(r => r.ReservationGuests)
+            .FirstOrDefaultAsync(r => r.Id == id);
+
+        if (reservation == null) return NotFound(new { message = "Reserva no encontrada." });
+
+        // 1. Actualizar datos del titular
+        if (reservation.Guest != null && request.MainGuest != null)
+        {
+            reservation.Guest.FirstName = $"{request.MainGuest.PrimerNombre} {request.MainGuest.SegundoNombre}".Trim();
+            reservation.Guest.LastName = $"{request.MainGuest.PrimerApellido} {request.MainGuest.SegundoApellido}".Trim();
+            reservation.Guest.Email = request.MainGuest.Correo;
+            reservation.Guest.Phone = request.MainGuest.Telefono;
+            reservation.Guest.DocumentNumber = request.MainGuest.NumeroId;
+            
+            if (Enum.TryParse<IdType>(request.MainGuest.TipoId, out var typeEnum)) 
+                reservation.Guest.DocumentType = typeEnum;
+                
+            reservation.Guest.Nationality = request.MainGuest.Nacionalidad;
+            reservation.Guest.CityOfOrigin = request.MainGuest.CiudadOrigen;
+            
+            if (!string.IsNullOrEmpty(request.MainGuest.FechaCumpleanos))
+            {
+                var datePart = request.MainGuest.FechaCumpleanos.Split('T')[0]; 
+                if (DateOnly.TryParse(datePart, out var bd)) reservation.Guest.BirthDate = bd;
+            }
+        }
+
+        // 2. Procesar Acompañantes
+        if (request.Companions != null && request.Companions.Any())
+        {
+            // Limpiar acompañantes previos en caso de que lo vuelvan a llenar para corregir algo
+            var existingCompanions = reservation.ReservationGuests.Where(rg => !rg.IsPrincipal).ToList();
+            _context.ReservationGuests.RemoveRange(existingCompanions);
+
+            foreach (var comp in request.Companions)
+            {
+                DateOnly? compBirthDate = null;
+                if (!string.IsNullOrEmpty(comp.FechaCumpleanos))
+                {
+                    var datePart = comp.FechaCumpleanos.Split('T')[0];
+                    if (DateOnly.TryParse(datePart, out var bd)) compBirthDate = bd;
+                }
+
+                var newGuest = new Guest
+                {
+                    Id = Guid.NewGuid(),
+                    FirstName = $"{comp.PrimerNombre} {comp.SegundoNombre}".Trim(),
+                    LastName = $"{comp.PrimerApellido} {comp.SegundoApellido}".Trim(),
+                    DocumentType = Enum.TryParse<IdType>(comp.TipoId, out var dt) ? dt : IdType.CC,
+                    DocumentNumber = comp.NumeroId,
+                    Email = comp.Correo ?? "",
+                    Phone = comp.Telefono ?? "",
+                    Nationality = comp.Nacionalidad ?? "",
+                    CityOfOrigin = comp.CiudadOrigen ?? "",
+                    BirthDate = compBirthDate,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+
+                _context.Guests.Add(newGuest);
+
+                reservation.ReservationGuests.Add(new ReservationGuest
+                {
+                    ReservationId = reservation.Id,
+                    GuestId = newGuest.Id,
+                    IsPrincipal = false
+                });
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        // Notificar en la campana al personal del hotel
+        await _notificationRepository.AddAsync(
+            "Check-in Online",
+            $"La reserva {reservation.ConfirmationCode} ha completado su registro previo.",
+            NotificationType.Info,
+            $"/reservas/{reservation.Id}"
+        );
+
+        return Ok(new { message = "Check-in online completado exitosamente." });
     }
 }

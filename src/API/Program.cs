@@ -5,7 +5,8 @@ using PmsZafiro.Application.Services;
 using PmsZafiro.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer; // Necesario
 using Microsoft.IdentityModel.Tokens; // Necesario
-using System.Text; // Necesario
+using System.Text;
+using PmsZafiro.Infrastructure.Services; // Necesario
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -65,6 +66,7 @@ builder.Services.AddScoped<ICashierRepository, CashierRepository>();
 builder.Services.AddScoped<CashierService>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 
 // 6. Workers
 builder.Services.AddHostedService<PmsZafiro.API.Workers.HousekeepingWorker>();
