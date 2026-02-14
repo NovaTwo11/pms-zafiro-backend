@@ -24,4 +24,11 @@ public class CompanionDto
 
     [JsonPropertyName("nacionalidad")]
     public string Nacionalidad { get; set; } = string.Empty;
+
+    // === NUEVOS CAMPOS ===
+    [JsonPropertyName("fechaNacimiento")]
+    public string? FechaNacimiento { get; set; }
+
+    [JsonPropertyName("ciudadOrigen")]
+    public string? CiudadOrigen { get; set; }
 }

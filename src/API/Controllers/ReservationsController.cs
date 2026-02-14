@@ -73,152 +73,165 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<ReservationDto>> GetById(Guid id)
+public async Task<ActionResult<ReservationDto>> GetById(Guid id)
+{
+    var r = await _context.Reservations
+        .Include(x => x.Guest)
+        .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
+        .Include(x => x.Segments).ThenInclude(s => s.Room)
+        .FirstOrDefaultAsync(x => x.Id == id);
+
+    if (r == null) return NotFound();
+
+    // --- Lógica Financiera (Folio y Balance) ---
+    var folio = await _context.Folios.OfType<GuestFolio>()
+        .Include(f => f.Transactions)
+        .FirstOrDefaultAsync(f => f.ReservationId == id);
+
+    var paidAmount = folio?.Transactions
+        .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
+        .Sum(t => Math.Abs(t.Amount)) ?? 0;
+
+    var charges = folio?.Transactions
+        .Where(t => t.Type == TransactionType.Charge || t.Type == TransactionType.Expense)
+        .Sum(t => t.Amount) ?? 0;
+        
+    // CORRECCIÓN 1: El total será igual a los cargos consolidados. 
+    // Si la reserva no tiene cargos aún (ej: recién hecha), usa el estimado base.
+    var realTotal = charges > 0 ? charges : r.TotalAmount;
+    var balance = realTotal - paidAmount;
+
+    // CORRECCIÓN 2: Si está pendiente pero detectamos dinero abonado, la confirmamos.
+    if (r.Status == ReservationStatus.Pending && paidAmount > 0)
     {
-        var r = await _context.Reservations
-            .Include(x => x.Guest)
-            .Include(x => x.ReservationGuests).ThenInclude(rg => rg.Guest)
-            .Include(x => x.Segments).ThenInclude(s => s.Room)
-            .FirstOrDefaultAsync(x => x.Id == id);
+        r.Status = ReservationStatus.Confirmed;
+        await _context.SaveChangesAsync(); 
+    }
 
-        if (r == null) return NotFound();
+    // --- Helper Local para Nombres ---
+    // Separa "Juan Carlos" en "Juan" y "Carlos" para que el frontend no se rompa
+    (string p, string s) SplitName(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
+        var parts = fullName.Trim().Split(' ', 2);
+        return (parts[0], parts.Length > 1 ? parts[1] : "");
+    }
 
-        // --- Lógica Financiera (Folio y Balance) ---
-        var folio = await _context.Folios.OfType<GuestFolio>()
-            .Include(f => f.Transactions)
-            .FirstOrDefaultAsync(f => f.ReservationId == id);
+    var guestsList = new List<GuestDetailDto>();
 
-        var paidAmount = folio?.Transactions
-            .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
-            .Sum(t => Math.Abs(t.Amount)) ?? 0;
+    // 1. Mapeo del Titular (Datos Completos)
+    if (r.Guest != null)
+    {
+        var (nom1, nom2) = SplitName(r.Guest.FirstName);
+        var (ape1, ape2) = SplitName(r.Guest.LastName);
+        
+        // Detectar firma en las notas
+        bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
 
-        var charges = folio?.Transactions
-            .Where(t => t.Type == TransactionType.Charge || t.Type == TransactionType.Expense)
-            .Sum(t => t.Amount) ?? 0;
-            
-        var balance = charges - paidAmount;
-
-        // --- Helper Local para Nombres ---
-        // Separa "Juan Carlos" en "Juan" y "Carlos" para que el frontend no se rompa
-        (string p, string s) SplitName(string fullName)
+        guestsList.Add(new GuestDetailDto
         {
-            if (string.IsNullOrWhiteSpace(fullName)) return ("", "");
-            var parts = fullName.Trim().Split(' ', 2);
-            return (parts[0], parts.Length > 1 ? parts[1] : "");
-        }
+            Id = r.Guest.Id.ToString(),
+            PrimerNombre = nom1,
+            SegundoNombre = nom2,
+            PrimerApellido = ape1,
+            SegundoApellido = ape2,
+            Correo = r.Guest.Email,
+            Telefono = r.Guest.Phone,
+            TipoId = r.Guest.DocumentType.ToString(),
+            NumeroId = r.Guest.DocumentNumber,
+            Nacionalidad = r.Guest.Nationality,
+            FechaNacimiento = r.Guest.BirthDate?.ToDateTime(TimeOnly.MinValue),
+            EsTitular = true,
+            IsSigned = isSigned 
+        });
+    }
 
-        var guestsList = new List<GuestDetailDto>();
-
-        // 1. Mapeo del Titular (Datos Completos)
-        if (r.Guest != null)
+    // 2. Mapeo de Acompañantes (Datos Básicos)
+    if (r.ReservationGuests != null)
+    {
+        foreach (var rg in r.ReservationGuests)
         {
-            var (nom1, nom2) = SplitName(r.Guest.FirstName);
-            var (ape1, ape2) = SplitName(r.Guest.LastName);
-            
-            // Detectar firma en las notas
-            bool isSigned = r.Status >= ReservationStatus.CheckedIn || (r.Notes != null && r.Notes.Contains("[FIRMADO]"));
+            if (rg.Guest == null) continue;
+            var (n1, n2) = SplitName(rg.Guest.FirstName);
+            var (a1, a2) = SplitName(rg.Guest.LastName);
 
             guestsList.Add(new GuestDetailDto
             {
-                Id = r.Guest.Id.ToString(),
-                PrimerNombre = nom1,
-                SegundoNombre = nom2,
-                PrimerApellido = ape1,
-                SegundoApellido = ape2,
-                Correo = r.Guest.Email,
-                Telefono = r.Guest.Phone,
-                TipoId = r.Guest.DocumentType.ToString(),
-                NumeroId = r.Guest.DocumentNumber,
-                Nacionalidad = r.Guest.Nationality,
-                FechaNacimiento = r.Guest.BirthDate?.ToDateTime(TimeOnly.MinValue),
-                EsTitular = true,
-                IsSigned = isSigned 
+                Id = rg.Guest.Id.ToString(),
+                PrimerNombre = n1,
+                SegundoNombre = n2,
+                PrimerApellido = a1,
+                SegundoApellido = a2,
+                TipoId = rg.Guest.DocumentType.ToString(),
+                NumeroId = rg.Guest.DocumentNumber,
+                Nacionalidad = rg.Guest.Nationality,
+                EsTitular = false,
+                IsSigned = true // Acompañantes asumen estado OK por simplicidad
             });
         }
+    } 
 
-        // 2. Mapeo de Acompañantes (Datos Básicos)
-        if (r.ReservationGuests != null)
-        {
-            foreach (var rg in r.ReservationGuests)
-            {
-                if (rg.Guest == null) continue;
-                var (n1, n2) = SplitName(rg.Guest.FirstName);
-                var (a1, a2) = SplitName(rg.Guest.LastName);
+    // --- Construcción del DTO Final ---
+    var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+    
+    // Calcular Status Step visual
+    int statusStep = r.Status switch
+    {
+        ReservationStatus.Confirmed => 2,
+        ReservationStatus.CheckedIn => 3,
+        ReservationStatus.CheckedOut => 4,
+        ReservationStatus.Cancelled or ReservationStatus.NoShow => 0,
+        _ => 1 // Pending
+    };
 
-                guestsList.Add(new GuestDetailDto
-                {
-                    Id = rg.Guest.Id.ToString(),
-                    PrimerNombre = n1,
-                    SegundoNombre = n2,
-                    PrimerApellido = a1,
-                    SegundoApellido = a2,
-                    TipoId = rg.Guest.DocumentType.ToString(),
-                    NumeroId = rg.Guest.DocumentNumber,
-                    Nacionalidad = rg.Guest.Nationality,
-                    EsTitular = false,
-                    IsSigned = true // Acompañantes asumen estado OK por simplicidad
-                });
-            }
-        } 
-
-        // --- Construcción del DTO Final ---
-        var mainSegment = r.Segments.OrderBy(s => s.CheckIn).FirstOrDefault();
+    return Ok(new ReservationDto
+    {
+        Id = r.Id,
+        Code = r.ConfirmationCode,
+        Status = r.Status.ToString(),
+        StatusStep = statusStep,
         
-        // Calcular Status Step visual
-        int statusStep = r.Status switch
+        RoomId = mainSegment?.Room?.Number ?? "?", 
+        RoomName = mainSegment?.Room?.Category ?? "Habitación",
+        
+        MainGuestId = r.GuestId,
+        MainGuestName = r.Guest?.FullName ?? "Desconocido",
+        CheckIn = r.CheckIn,
+        CheckOut = r.CheckOut,
+        Nights = (r.CheckOut.Date - r.CheckIn.Date).Days > 0 ? (r.CheckOut.Date - r.CheckIn.Date).Days : 1,
+        Adults = r.Adults,
+        Children = r.Children,
+        CreatedDate = r.CreatedAt.DateTime,
+        Notes = r.Notes ?? "",
+        
+        // CORRECCIÓN 3: Pasar el total y balance calculados al DTO
+        TotalAmount = realTotal, 
+        PaidAmount = paidAmount,
+        Balance = balance,
+        
+        FolioId = folio?.Id, 
+        
+        Segments = r.Segments.Select(s => new ReservationSegmentDto
         {
-            ReservationStatus.Confirmed => 2,
-            ReservationStatus.CheckedIn => 3,
-            ReservationStatus.CheckedOut => 4,
-            ReservationStatus.Cancelled or ReservationStatus.NoShow => 0,
-            _ => 1 // Pending
-        };
-
-        return Ok(new ReservationDto
+            RoomId = s.RoomId,
+            RoomNumber = s.Room?.Number ?? "?",
+            Start = s.CheckIn,
+            End = s.CheckOut
+        }).ToList(),
+        
+        Guests = guestsList, // ¡Lista corregida!
+        
+        FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
         {
-            Id = r.Id,
-            Code = r.ConfirmationCode,
-            Status = r.Status.ToString(),
-            StatusStep = statusStep,
-            
-            RoomId = mainSegment?.Room?.Number ?? "?", 
-            RoomName = mainSegment?.Room?.Category ?? "Habitación",
-            
-            MainGuestId = r.GuestId,
-            MainGuestName = r.Guest?.FullName ?? "Desconocido",
-            CheckIn = r.CheckIn,
-            CheckOut = r.CheckOut,
-            Nights = (r.CheckOut.Date - r.CheckIn.Date).Days > 0 ? (r.CheckOut.Date - r.CheckIn.Date).Days : 1,
-            Adults = r.Adults,
-            Children = r.Children,
-            CreatedDate = r.CreatedAt.DateTime,
-            Notes = r.Notes ?? "",
-            TotalAmount = r.TotalAmount,
-            PaidAmount = paidAmount,
-            Balance = balance,
-            FolioId = folio?.Id, 
-            
-            Segments = r.Segments.Select(s => new ReservationSegmentDto
-            {
-                RoomId = s.RoomId,
-                RoomNumber = s.Room?.Number ?? "?",
-                Start = s.CheckIn,
-                End = s.CheckOut
-            }).ToList(),
-            
-            Guests = guestsList, // ¡Lista corregida!
-            
-            FolioItems = folio?.Transactions.OrderByDescending(t => t.CreatedAt).Select(t => new FolioItemDto
-            {
-                Id = t.Id,
-                Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
-                Concept = t.Description ?? "Movimiento",
-                Qty = 1,
-                Price = t.Amount, 
-                Total = t.Amount
-            }).ToList() ?? new List<FolioItemDto>()
-        });
-    }
+            Id = t.Id,
+            Date = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+            Concept = t.Description ?? "Movimiento",
+            Qty = 1,
+            Price = t.Amount, 
+            Total = t.Amount
+        }).ToList() ?? new List<FolioItemDto>()
+    });
+}
 
     // ==========================================
     // CREATE: RESERVA MANUAL (CORREGIDO)
@@ -567,18 +580,24 @@ public class ReservationsController : ControllerBase
         if (reservation == null) return NotFound(new { message = "Reserva no encontrada" });
         if (reservation.Guest == null) return NotFound(new { message = "El huésped titular no existe (Error de integridad)." });
 
-        // 1. ACTUALIZAR TITULAR (Merge de datos)
-        // Combinamos Primer y Segundo nombre/apellido para guardar en el campo único de BD
+        // 1. ACTUALIZAR TITULAR
         var g = reservation.Guest;
         g.FirstName = $"{dto.PrimerNombre} {dto.SegundoNombre}".Trim(); 
         g.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
         g.DocumentNumber = dto.NumeroId;
         g.Nationality = dto.Nacionalidad;
         
-        // Actualizar solo si hay datos nuevos (no borrar lo existente si viene nulo)
         if (!string.IsNullOrEmpty(dto.Telefono)) g.Phone = dto.Telefono;
         if (!string.IsNullOrEmpty(dto.Correo)) g.Email = dto.Correo;
+        if (!string.IsNullOrEmpty(dto.CiudadOrigen)) g.CityOfOrigin = dto.CiudadOrigen; // NUEVO
         if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum)) g.DocumentType = typeEnum;
+
+        // NUEVO: Procesar Fecha Nacimiento Titular
+        if (!string.IsNullOrEmpty(dto.FechaNacimiento))
+        {
+            var datePart = dto.FechaNacimiento.Split('T')[0]; 
+            if (DateOnly.TryParse(datePart, out var bd)) g.BirthDate = bd;
+        }
 
         // 2. FIRMA DIGITAL
         if (!string.IsNullOrEmpty(dto.SignatureBase64))
@@ -590,10 +609,9 @@ public class ReservationsController : ControllerBase
             }
         }
 
-        // 3. GESTIÓN DE ACOMPAÑANTES (Full Sync)
+        // 3. GESTIÓN DE ACOMPAÑANTES
         if (dto.Companions != null)
         {
-            // Limpiar lista actual para evitar duplicados en la relación
             if (reservation.ReservationGuests.Any())
             {
                 _context.ReservationGuests.RemoveRange(reservation.ReservationGuests);
@@ -603,9 +621,15 @@ public class ReservationsController : ControllerBase
             {
                 if (string.IsNullOrWhiteSpace(compDto.NumeroId)) continue;
 
-                // Lógica UPSERT para Acompañante
                 var existingGuest = await _context.Guests
                     .FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
+
+                DateOnly? compBirthDate = null;
+                if (!string.IsNullOrEmpty(compDto.FechaNacimiento))
+                {
+                    var datePart = compDto.FechaNacimiento.Split('T')[0];
+                    if (DateOnly.TryParse(datePart, out var bd)) compBirthDate = bd;
+                }
 
                 if (existingGuest == null)
                 {
@@ -616,16 +640,19 @@ public class ReservationsController : ControllerBase
                         DocumentNumber = compDto.NumeroId,
                         Nationality = compDto.Nacionalidad,
                         DocumentType = Enum.TryParse<IdType>(compDto.TipoId, out var t) ? t : IdType.CC,
+                        CityOfOrigin = compDto.CiudadOrigen, // NUEVO
+                        BirthDate = compBirthDate, // NUEVO
                         CreatedAt = DateTimeOffset.UtcNow
                     };
                     _context.Guests.Add(existingGuest);
                 }
                 else
                 {
-                    // Si ya existe, actualizamos sus nombres para corregir errores tipográficos
                     existingGuest.FirstName = $"{compDto.PrimerNombre} {compDto.SegundoNombre}".Trim();
                     existingGuest.LastName = $"{compDto.PrimerApellido} {compDto.SegundoApellido}".Trim();
                     if (!string.IsNullOrEmpty(compDto.Nacionalidad)) existingGuest.Nationality = compDto.Nacionalidad;
+                    if (!string.IsNullOrEmpty(compDto.CiudadOrigen)) existingGuest.CityOfOrigin = compDto.CiudadOrigen; // NUEVO
+                    if (compBirthDate.HasValue) existingGuest.BirthDate = compBirthDate; // NUEVO
                 }
 
                 reservation.ReservationGuests.Add(new ReservationGuest
