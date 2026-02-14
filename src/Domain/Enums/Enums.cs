@@ -6,7 +6,8 @@ public enum RoomType
     Doble,
     Triple,
     Familiar,
-    SuiteFamiliar
+    SuiteFamiliar,
+    Suite
 }
 
 // --- Enums Restaurados (Para corregir errores de compilación) ---

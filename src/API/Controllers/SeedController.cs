@@ -73,8 +73,20 @@ public class SeedController : ControllerBase
     private async Task<List<Room>> CreateRooms()
     {
         var rooms = new List<Room>();
-        var categories = new[] { "Sencilla", "Doble", "Familiar", "Suite Familiar" }; 
-        var prices = new[] { 150000m, 220000m, 280000m, 350000m };
+        var categories = new[] { 
+            "Doble", 
+            "Triple", 
+            "Familiar", 
+            "Suite Familiar", 
+            "Suite" 
+        }; 
+        var prices = new[] { 
+            130000m, // Doble
+            180000m, // Triple
+            220000m, // Familiar
+            300000m, // Suite Familiar
+            340000m  // Suite (La más costosa)
+        };
 
         for (int floor = 1; floor <= 3; floor++)
         {
