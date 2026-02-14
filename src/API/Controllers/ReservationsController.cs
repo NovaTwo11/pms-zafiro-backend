@@ -18,7 +18,9 @@ public class ReservationsController : ControllerBase
     private readonly IRoomRepository _roomRepository;
     private readonly INotificationRepository _notificationRepository;
     private readonly IGuestRepository _guestRepository;
-    private readonly PmsDbContext _context; 
+    private readonly PmsDbContext _context;
+    private readonly IEmailService _emailService;
+    private readonly IConfiguration _config;
 
     public ReservationsController(
         IReservationRepository repository,
@@ -26,7 +28,9 @@ public class ReservationsController : ControllerBase
         IRoomRepository roomRepository,
         INotificationRepository notificationRepository,
         IGuestRepository guestRepository,
-        PmsDbContext context)
+        PmsDbContext context,
+        IEmailService emailService,
+        IConfiguration config)
     {
         _repository = repository;
         _folioRepository = folioRepository;
@@ -34,6 +38,8 @@ public class ReservationsController : ControllerBase
         _notificationRepository = notificationRepository;
         _guestRepository = guestRepository;
         _context = context;
+        _emailService = emailService;
+        _config = config;
     }
     
     // ==========================================
@@ -875,5 +881,54 @@ public async Task<ActionResult<ReservationDto>> GetById(Guid id)
         await _context.SaveChangesAsync();
 
         return Ok(new { message = "Reserva movida exitosamente." });
+    }
+    
+    [HttpPost("{id}/send-summary")]
+    public async Task<IActionResult> SendReservationSummary(Guid id)
+    {
+        var r = await _context.Reservations
+            .Include(x => x.Guest)
+            .Include(x => x.Segments).ThenInclude(s => s.Room)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (r == null || r.Guest == null || string.IsNullOrEmpty(r.Guest.Email)) 
+            return BadRequest("Reserva o correo de huésped no encontrado.");
+
+        var roomInfo = r.Segments.FirstOrDefault()?.Room?.Number ?? "N/A";
+        var body = $@"
+            <h2>Confirmación de Reserva</h2>
+            <p>Hola {r.Guest.FirstName}, su reserva ha sido confirmada con los siguientes detalles:</p>
+            <ul>
+                <li><strong>Código de Reserva:</strong> {r.ConfirmationCode}</li>
+                <li><strong>Habitación:</strong> {roomInfo}</li>
+                <li><strong>Check-in:</strong> {r.CheckIn:dd MMM yyyy}</li>
+                <li><strong>Check-out:</strong> {r.CheckOut:dd MMM yyyy}</li>
+                <li><strong>Total de la Estadía:</strong> {r.TotalAmount:C}</li>
+            </ul>
+            <p>¡Esperamos recibirle pronto!</p>";
+
+        await _emailService.SendEmailAsync(r.Guest.Email, $"Reserva Confirmada #{r.ConfirmationCode}", body);
+        return Ok(new { message = "Resumen enviado exitosamente." });
+    }
+
+    [HttpPost("{id}/send-checkin-link")]
+    public async Task<IActionResult> SendCheckInLink(Guid id)
+    {
+        var r = await _context.Reservations.Include(x => x.Guest).FirstOrDefaultAsync(x => x.Id == id);
+        if (r == null || r.Guest == null || string.IsNullOrEmpty(r.Guest.Email)) 
+            return BadRequest("Reserva o correo no encontrado.");
+
+        var baseUrl = _config["FrontendUrl"] ?? "http://localhost:3000"; // Asegúrate de configurar esto
+        var link = $"{baseUrl}/guest/check-in/{r.ConfirmationCode ?? r.Id.ToString()}";
+
+        var body = $@"
+            <h2>Agilice su llegada (Check-in Online)</h2>
+            <p>Estimado/a {r.Guest.FirstName},</p>
+            <p>Para hacer más rápido su ingreso al hotel, le invitamos a registrar a sus acompañantes en el siguiente enlace antes de su llegada:</p>
+            <p><a href='{link}' style='padding: 10px 15px; background-color: #059669; color: white; text-decoration: none; border-radius: 5px;'>Completar Check-in Online</a></p>
+            <p>Si el botón no funciona, copie y pegue este enlace en su navegador: <br/>{link}</p>";
+
+        await _emailService.SendEmailAsync(r.Guest.Email, $"Check-in Online - Reserva #{r.ConfirmationCode}", body);
+        return Ok(new { message = "Enlace de check-in enviado exitosamente." });
     }
 }

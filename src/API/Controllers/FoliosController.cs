@@ -14,12 +14,53 @@ public class FoliosController : ControllerBase
     private readonly IFolioRepository _repository;
     private readonly CashierService _cashierService;
     private readonly IProductRepository _productRepository;
+    private readonly IEmailService _emailService;
+    private readonly IConfiguration _config;
 
-    public FoliosController(IFolioRepository repository, CashierService cashierService, IProductRepository productRepository)
+    public FoliosController(IFolioRepository repository, CashierService cashierService, IProductRepository productRepository, IEmailService emailService, IConfiguration config)
     {
         _repository = repository;
         _cashierService = cashierService;
         _productRepository = productRepository;
+        _emailService = emailService;
+        _config = config;
+    }
+    
+    [HttpPost("{id}/send-invoice")]
+    public async Task<IActionResult> SendInvoice(Guid id)
+    {
+        var folio = await _repository.GetByIdAsync(id); // Asumo que el repo hace Includes básicos
+        if (folio == null) return NotFound("Folio no encontrado");
+
+        string toEmail = "";
+        string guestName = "";
+
+        if (folio is GuestFolio gf && gf.Reservation != null && gf.Reservation.Guest != null)
+        {
+            toEmail = gf.Reservation.Guest.Email;
+            guestName = gf.Reservation.Guest.FullName;
+        }
+
+        if (string.IsNullOrEmpty(toEmail))
+            return BadRequest("No hay un correo registrado para esta cuenta.");
+
+        var charges = folio.Transactions.Where(t => t.Type == TransactionType.Charge).Sum(t => t.Amount);
+        var payments = folio.Transactions.Where(t => t.Type == TransactionType.Payment).Sum(t => t.Amount);
+        var balance = charges - payments;
+
+        var body = $@"
+        <h2>Resumen de Cuenta (Facturación)</h2>
+        <p>Hola {guestName},</p>
+        <p>Este es el estado actual de su cuenta (Folio #{folio.Id.ToString()[..8]}):</p>
+        <ul>
+            <li><strong>Total Cargos:</strong> {charges:C}</li>
+            <li><strong>Total Pagos/Abonos:</strong> {payments:C}</li>
+            <li><strong>Saldo Pendiente:</strong> {balance:C}</li>
+        </ul>
+        <p>Gracias por preferirnos.</p>";
+
+        await _emailService.SendEmailAsync(toEmail, $"Factura PMS Zafiro - Folio #{folio.Id.ToString()[..8]}", body);
+        return Ok(new { message = "Factura enviada exitosamente." });
     }
     
     [HttpGet("active-guests")]
