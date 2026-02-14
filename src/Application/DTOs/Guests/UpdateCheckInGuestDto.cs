@@ -33,6 +33,8 @@ public class UpdateCheckInGuestDto
 
     [JsonPropertyName("correo")]
     public string? Correo { get; set; }
+    [JsonPropertyName("ciudadOrigen")]
+    public string? CiudadOrigen { get; set; }
 
     [JsonPropertyName("fechaNacimiento")]
     public string? FechaNacimiento { get; set; }

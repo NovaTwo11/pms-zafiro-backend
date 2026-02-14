@@ -7,7 +7,6 @@ public class GuestDto
     public Guid Id { get; set; }
     public string FullName { get; set; } = string.Empty;
     
-    // Campos separados para facilitar la edición en el frontend
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     
@@ -17,11 +16,13 @@ public class GuestDto
     public string Phone { get; set; } = string.Empty;
     public string Nationality { get; set; } = string.Empty;
     
-    // Fecha de nacimiento (puede ser nula)
+    // --- CORRECCIÓN: Faltaba esta propiedad ---
+    public string? CityOfOrigin { get; set; } 
+    // ------------------------------------------
+    
     public DateOnly? BirthDate { get; set; }
 
-    // Estadísticas y Estado
     public int TotalStays { get; set; }
     public DateTime? LastStayDate { get; set; }
-    public string CurrentStatus { get; set; } = "previous"; // "in-house" o "previous"
+    public string CurrentStatus { get; set; } = "previous"; 
 }

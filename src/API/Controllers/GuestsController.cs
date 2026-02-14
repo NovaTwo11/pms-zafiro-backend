@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Globalization;
+using Microsoft.AspNetCore.Mvc;
 using PmsZafiro.Application.DTOs.Guests;
 using PmsZafiro.Application.Interfaces;
 using PmsZafiro.Domain.Entities;
@@ -37,6 +38,11 @@ public class GuestsController : ControllerBase
                 Email = g.Email,
                 Phone = g.Phone,
                 Nationality = g.Nationality,
+                
+                // --- CORRECCIÓN 1: FALTABA ESTA LÍNEA ---
+                CityOfOrigin = g.CityOfOrigin, 
+                // ----------------------------------------
+
                 TotalStays = g.Reservations.Count(r => r.Status != ReservationStatus.Cancelled),
                 LastStayDate = lastRes?.CheckOut, 
                 CurrentStatus = isActive ? "in-house" : "previous",
@@ -77,72 +83,78 @@ public class GuestsController : ControllerBase
             return Conflict(new { message = $"Ya existe un huésped con el documento {dto.DocumentNumber}" });
         }
 
+        // 1. Manejo de Fecha (Sin zona horaria)
+        DateOnly? birthDate = null;
+        if (!string.IsNullOrEmpty(dto.BirthDate))
+        {
+            // Intentar parsear "yyyy-MM-dd"
+            if (DateOnly.TryParseExact(dto.BirthDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+            {
+                birthDate = d;
+            }
+        }
+
+        // 2. Enum Parse
+        var docType = Enum.TryParse<IdType>(dto.DocumentType, true, out var dt) ? dt : IdType.CC;
+
         var guest = new Guest
         {
-            FirstName = dto.FirstName,
-            LastName = dto.LastName,
-            DocumentType = dto.DocumentType,
+            // Concatenación robusta: "Juan" + " " + "David" -> "Juan David"
+            FirstName = $"{dto.FirstName} {dto.SecondName}".Trim(),
+            LastName = $"{dto.LastName} {dto.SecondLastName}".Trim(),
+            
+            DocumentType = docType,
             DocumentNumber = dto.DocumentNumber,
             Email = dto.Email,
             Phone = dto.Phone,
             Nationality = dto.Nationality,
-            BirthDate = dto.BirthDate,
+            CityOfOrigin = dto.CityOfOrigin, // ¡AQUÍ SE GUARDA LA CIUDAD!
+            BirthDate = birthDate,
             CreatedAt = DateTimeOffset.UtcNow
         };
 
         await _repository.AddAsync(guest);
-        return CreatedAtAction(nameof(GetById), new { id = guest.Id }, new GuestDto 
-        { 
-            Id = guest.Id, 
-            FullName = guest.FullName,
-            DocumentNumber = guest.DocumentNumber 
-        });
+        
+        // Retorno simple
+        return Ok(new { id = guest.Id, message = "Huésped creado correctamente" });
     }
 
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCheckInGuestDto dto)
     {
-        Console.WriteLine($"[DEBUG] Recibida petición PUT para Guest ID: {id}");
-        
         var guest = await _repository.GetByIdAsync(id);
-        if (guest == null) 
-        {
-            Console.WriteLine("[DEBUG] Huésped no encontrado en BD.");
-            return NotFound(new { message = "Huésped no encontrado" });
-        }
+        if (guest == null) return NotFound(new { message = "Huésped no encontrado" });
 
-        Console.WriteLine($"[DEBUG] Huésped encontrado: {guest.FullName}. Actualizando datos...");
-
-        // 1. Mapeo Manual
+        // Actualización
         guest.FirstName = $"{dto.PrimerNombre} {dto.SegundoNombre}".Trim();
         guest.LastName = $"{dto.PrimerApellido} {dto.SegundoApellido}".Trim();
         guest.DocumentNumber = dto.NumeroId;
         guest.Nationality = dto.Nacionalidad;
-        
+        guest.CityOfOrigin = dto.CiudadOrigen; // ¡AQUÍ SE GUARDA LA CIUDAD!
+
         if (!string.IsNullOrEmpty(dto.Correo)) guest.Email = dto.Correo;
         if (!string.IsNullOrEmpty(dto.Telefono)) guest.Phone = dto.Telefono;
 
-        if (Enum.TryParse<IdType>(dto.TipoId, out var typeEnum))
+        if (Enum.TryParse<IdType>(dto.TipoId, true, out var typeEnum))
         {
             guest.DocumentType = typeEnum;
         }
 
-        if (!string.IsNullOrEmpty(dto.FechaNacimiento) && DateTime.TryParse(dto.FechaNacimiento, out var parsedDate))
+        // Fecha de nacimiento (Mismo fix de zona horaria)
+        if (!string.IsNullOrEmpty(dto.FechaNacimiento))
         {
-            guest.BirthDate = DateOnly.FromDateTime(parsedDate);
+            // Si viene en formato ISO largo (desde el editor) cortamos la T
+            var datePart = dto.FechaNacimiento.Contains("T") 
+                ? dto.FechaNacimiento.Split('T')[0] 
+                : dto.FechaNacimiento;
+
+            if (DateOnly.TryParseExact(datePart, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+            {
+                guest.BirthDate = d;
+            }
         }
 
-        try 
-        {
-            // Forzar actualización explícita
-            await _repository.UpdateAsync(guest);
-            Console.WriteLine("[DEBUG] UpdateAsync llamado exitosamente.");
-            return Ok(new { message = "Datos del huésped actualizados correctamente" });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR] Error al guardar: {ex.Message}");
-            return StatusCode(500, new { message = "Error interno al actualizar", error = ex.Message });
-        }
+        await _repository.UpdateAsync(guest);
+        return Ok(new { message = "Datos actualizados correctamente" });
     }
 }
