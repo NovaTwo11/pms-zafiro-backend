@@ -18,7 +18,7 @@ public class PmsDbContext : DbContext
     public DbSet<ReservationSegment> ReservationSegments { get; set; }
     public DbSet<ReservationGuest> ReservationGuests { get; set; }
     
-    // NUEVO: Agregamos el DbSet para que reconozca la tabla de variaciones de precios
+    public DbSet<User> Users { get; set; }
     public DbSet<RoomPriceOverride> RoomPriceOverrides { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -64,5 +64,16 @@ public class PmsDbContext : DbContext
         
         modelBuilder.Entity<GuestFolio>().ToTable("GuestFolios");
         modelBuilder.Entity<ExternalFolio>().ToTable("ExternalFolios");
+        
+        modelBuilder.Entity<User>().HasData(
+            new User 
+            { 
+                Id = 1, 
+                Username = "admin", 
+                PasswordHash = "admin123", 
+                Role = "Admin" ,
+                CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            }
+        );
     }
 }

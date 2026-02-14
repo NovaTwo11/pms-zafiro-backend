@@ -166,3 +166,4 @@ C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\obj\Debug\net10.0\PmsZafir
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
 C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
+C:\Users\holda\RiderProjects\PmsZafiroBackend\src\API\bin\Debug\net10.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
