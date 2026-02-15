@@ -29,8 +29,12 @@ public class ReservationRepository : IReservationRepository
     public async Task<IEnumerable<ReservationDto>> GetReservationsWithLiveBalanceAsync()
     {
         var query = from r in _context.Reservations.AsNoTracking()
-                    join g in _context.Guests on r.GuestId equals g.Id
-                    // Left Join para traer el Folio si existe
+                    
+                    // 1. LEFT JOIN PARA EL HUÉSPED (Evita que los bloqueos desaparezcan)
+                    join g in _context.Guests on r.GuestId equals g.Id into guestGroup
+                    from guest in guestGroup.DefaultIfEmpty()
+                    
+                    // 2. LEFT JOIN PARA EL FOLIO
                     join f in _context.Folios.OfType<GuestFolio>() on r.Id equals f.ReservationId into folioGroup
                     from folio in folioGroup.DefaultIfEmpty()
                     
@@ -40,21 +44,25 @@ public class ReservationRepository : IReservationRepository
                         Id = r.Id,
                         Code = r.ConfirmationCode,
                         Status = r.Status.ToString(),
-                        MainGuestId = r.GuestId,
-                        MainGuestName = g.FirstName + " " + g.LastName,
+                        
+                        // CORRECCIÓN CS0266: Asignar un Guid vacío si es null (Bloqueos)
+                        MainGuestId = r.GuestId ?? Guid.Empty, 
+                        
+                        // Manejo seguro por si es un bloqueo y no tiene huésped asociado
+                        MainGuestName = guest != null ? (guest.FirstName + " " + guest.LastName) : "Bloqueo/Mantenimiento",
+                        
                         CheckIn = r.CheckIn,
                         CheckOut = r.CheckOut,
                         // Cálculo seguro de noches
                         Nights = (r.CheckOut.Date - r.CheckIn.Date).Days == 0 ? 1 : (r.CheckOut.Date - r.CheckIn.Date).Days,
                         TotalAmount = r.TotalAmount,
 
-                        // 1. Calcular Saldo Real (Debe - Haber)
-                        // Si no hay folio, asumimos deuda 0 o TotalAmount según prefieras (aquí pongo 0 si no hay checkin)
+                        // Calcular Saldo Real (Debe - Haber)
                         Balance = folio != null ? folio.Transactions.Sum(t => 
                             (t.Type == TransactionType.Charge || t.Type == TransactionType.Expense) ? t.Amount : 
                             (t.Type == TransactionType.Payment || t.Type == TransactionType.Income) ? -t.Amount : 0) : 0,
 
-                        // 2. Calcular Total Pagado
+                        // Calcular Total Pagado
                         PaidAmount = folio != null ? folio.Transactions
                             .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
                             .Sum(t => t.Amount) : 0,

@@ -7,8 +7,8 @@ public class Reservation
     public Guid Id { get; set; }
     public string ConfirmationCode { get; set; } = string.Empty;
     
-    public Guid GuestId { get; set; }
-    public Guest Guest { get; set; } = null!;
+    public Guid? GuestId { get; set; }
+    public Guest? Guest { get; set; } = null!;
     public ICollection<ReservationGuest> ReservationGuests { get; set; } = new List<ReservationGuest>();
     public ICollection<ReservationSegment> Segments { get; set; } = new List<ReservationSegment>();
 

@@ -191,7 +191,7 @@ public class ReservationsController : ControllerBase
             StatusStep = statusStep,
             RoomId = mainSegment?.Room?.Number ?? "?", 
             RoomName = mainSegment?.Room?.Category ?? "Habitación",
-            MainGuestId = r.GuestId,
+            MainGuestId = r.GuestId ?? Guid.Empty,
             MainGuestName = r.Guest?.FullName ?? "Desconocido",
             CheckIn = r.CheckIn,
             CheckOut = r.CheckOut,
@@ -252,27 +252,12 @@ public class ReservationsController : ControllerBase
             }
         }
 
-        Guest? guest = null;
+        Guid? finalGuestId = null;
 
-        if (dto.Status == "Blocked" || dto.Status == "Maintenance")
+        // 👇 CORRECCIÓN: Si es bloqueo NO creamos un usuario fantasma
+        if (dto.Status != "Blocked" && dto.Status != "Maintenance")
         {
-            guest = await _guestRepository.GetByDocumentAsync("SYS-BLOCK");
-            if (guest == null)
-            {
-                guest = new Guest
-                {
-                    FirstName = "BLOQUEO",
-                    LastName = "SISTEMA",
-                    DocumentType = IdType.CC,
-                    DocumentNumber = "SYS-BLOCK",
-                    Nationality = "System",
-                    CreatedAt = DateTimeOffset.UtcNow
-                };
-                await _guestRepository.AddAsync(guest);
-            }
-        }
-        else 
-        {
+            Guest? guest = null;
             if (!string.IsNullOrEmpty(dto.MainGuestId) && Guid.TryParse(dto.MainGuestId, out Guid guestId))
                 guest = await _guestRepository.GetByIdAsync(guestId);
             
@@ -310,13 +295,16 @@ public class ReservationsController : ControllerBase
                 if (!string.IsNullOrEmpty(dto.GuestPhone)) guest.Phone = dto.GuestPhone;
                 await _context.SaveChangesAsync();
             }
+
+            finalGuestId = guest.Id;
         }
 
         var reservation = new Reservation
         {
-            GuestId = guest.Id,
-            CheckIn = dto.CheckIn,
-            CheckOut = dto.CheckOut,
+            GuestId = finalGuestId, // Puede ser null si es bloqueo
+            // 👇 CORRECCIÓN DE FECHAS: Forzar UTC a horas neutras (15:00 y 12:00)
+            CheckIn = DateTime.SpecifyKind(checkInDate.AddHours(15), DateTimeKind.Utc),
+            CheckOut = DateTime.SpecifyKind(checkOutDate.AddHours(12), DateTimeKind.Utc),
             Adults = dto.Adults,
             Children = dto.Children,
             Notes = dto.SpecialRequests,
@@ -340,7 +328,7 @@ public class ReservationsController : ControllerBase
         {
             await _notificationRepository.AddAsync(
                 "Nueva Reserva",
-                $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName}",
+                $"Reserva {reservation.ConfirmationCode} creada",
                 NotificationType.Success,
                 $"/reservas/{reservation.Id}"
             );
@@ -400,8 +388,9 @@ public class ReservationsController : ControllerBase
         var reservation = new Reservation
         {
             GuestId = guest.Id,
-            CheckIn = checkInDate,
-            CheckOut = checkOutDate,
+            // 👇 CORRECCIÓN DE FECHAS WEB
+            CheckIn = DateTime.SpecifyKind(checkInDate.AddHours(15), DateTimeKind.Utc),
+            CheckOut = DateTime.SpecifyKind(checkOutDate.AddHours(12), DateTimeKind.Utc),
             TotalAmount = calculatedTotal, 
             Status = ReservationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -419,7 +408,7 @@ public class ReservationsController : ControllerBase
 
         await _notificationRepository.AddAsync(
             "Nueva Reserva Web",
-            $"Reserva {reservation.ConfirmationCode} creada para {guest.FullName} por {calculatedTotal:C}",
+            $"Reserva {reservation.ConfirmationCode} creada por {calculatedTotal:C}",
             NotificationType.Success,
             $"/reservas/{reservation.Id}"
         );
@@ -498,7 +487,7 @@ public class ReservationsController : ControllerBase
             
             await _notificationRepository.AddAsync(
                 "Check-in Exitoso",
-                $"Huésped {reservation.Guest?.FullName} en habitación {room.Number}",
+                $"Huésped en habitación {room.Number}",
                 NotificationType.Success,
                 $"/folios?id={folio.Id}"
             );
@@ -732,6 +721,12 @@ public class ReservationsController : ControllerBase
             return BadRequest(new { message = "No se puede cancelar una reserva que ya ingresó o finalizó." });
 
         reservation.Status = ReservationStatus.Cancelled;
+        
+        // 👇 CORRECCIÓN: Eliminar los segmentos de inmediato limpia el cronograma
+        if (reservation.Segments.Any())
+        {
+            _context.Set<ReservationSegment>().RemoveRange(reservation.Segments);
+        }
         
         _context.Reservations.Update(reservation);
         await _context.SaveChangesAsync();

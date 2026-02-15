@@ -137,12 +137,16 @@ public class DashboardController : ControllerBase
         var activities = recentReservations.Select(res => new ActivityFeedDto
         {
             Id = res.Id.ToString(),
-            User = $"{res.Guest.FirstName} {res.Guest.LastName}",
-            Action = "Nueva Reserva",
+            // Manejo seguro por si es un bloqueo (Guest = null)
+            User = res.Guest != null ? $"{res.Guest.FirstName} {res.Guest.LastName}" : "Sistema",
+            Action = res.Guest != null ? "Nueva Reserva" : "Bloqueo de Habitación",
             Time = res.CreatedAt.ToLocalTime().ToString("HH:mm"),
-            Amount = $"+{res.TotalAmount:N0}",
+            Amount = res.TotalAmount > 0 ? $"+{res.TotalAmount:N0}" : "$0",
             Avatar = "",
-            Initials = (res.Guest.FirstName.Substring(0, 1) + res.Guest.LastName.Substring(0, 1)).ToUpper()
+            // Extracción segura de iniciales
+            Initials = res.Guest != null && !string.IsNullOrEmpty(res.Guest.FirstName) 
+                ? (res.Guest.FirstName.Substring(0, 1) + (!string.IsNullOrEmpty(res.Guest.LastName) ? res.Guest.LastName.Substring(0, 1) : "")).ToUpper()
+                : "SYS"
         }).ToList();
 
         return Ok(activities);
