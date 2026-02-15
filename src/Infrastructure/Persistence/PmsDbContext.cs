@@ -20,10 +20,8 @@ public class PmsDbContext : DbContext
     public DbSet<ReservationGuest> ReservationGuests { get; set; }
     public DbSet<User> Users { get; set; }
     public DbSet<RoomPriceOverride> RoomPriceOverrides { get; set; }
-    
-    // --- NUEVO DBSET PARA INTEGRACIONES ---
     public DbSet<ChannelRoomMapping> ChannelRoomMappings { get; set; }
-
+    public DbSet<IntegrationInboundEvent> IntegrationInboundEvents { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
