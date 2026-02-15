@@ -83,6 +83,7 @@ builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 
 // Workers (Tareas en segundo plano)
 builder.Services.AddHostedService<HousekeepingWorker>();
+builder.Services.AddHostedService<BookingIntegrationWorker>();
 
 var app = builder.Build();
 
