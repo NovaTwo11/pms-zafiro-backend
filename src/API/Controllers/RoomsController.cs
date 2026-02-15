@@ -87,7 +87,7 @@ public class RoomsController : ControllerBase
     }
     
     // 👇 CORRECCIÓN AQUÍ: Recibimos un objeto JSON con la propiedad "Status"
-    [HttpPatch("{id}/status")]
+    [HttpPut("{id}/status")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateRoomStatusDto dto)
     {
         var room = await _repository.GetByIdAsync(id);
@@ -98,8 +98,7 @@ public class RoomsController : ControllerBase
         {
             room.Status = parsedStatus;
             await _repository.UpdateAsync(room);
-            return NoContent();
-        }
+            return Ok(new { message = "Estado actualizado correctamente." });        }
         
         return BadRequest(new { message = "Estado inválido." });
     }
