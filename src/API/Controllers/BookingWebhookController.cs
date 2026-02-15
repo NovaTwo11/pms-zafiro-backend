@@ -1,6 +1,8 @@
-﻿// src/API/Controllers/BookingWebhookController.cs
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using PmsZafiro.Infrastructure.Persistence;
+using PmsZafiro.Domain.Entities;
+using PmsZafiro.Domain.Enums;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -10,28 +12,36 @@ namespace PmsZafiro.API.Controllers;
 [Route("api/webhooks/booking")]
 public class BookingWebhookController : ControllerBase
 {
+    private readonly PmsDbContext _context;
     private readonly ILogger<BookingWebhookController> _logger;
-    // Aquí luego inyectaremos el repositorio para guardar en el Inbox
 
-    public BookingWebhookController(ILogger<BookingWebhookController> logger)
+    public BookingWebhookController(PmsDbContext context, ILogger<BookingWebhookController> logger)
     {
+        _context = context;
         _logger = logger;
     }
 
     [HttpPost("reservation-push")]
     public async Task<IActionResult> ReceiveReservationPush()
     {
-        // 1. Leer el body crudo (Booking puede enviar XML o JSON dependiendo de la configuración de tu cuenta)
+        // 1. Leer el body crudo (XML o JSON) que nos manda Booking.com
         using var reader = new StreamReader(Request.Body);
         var rawPayload = await reader.ReadToEndAsync();
 
-        // 2. Registrar el payload para auditoría y debug (¡Clave para ver qué nos mandan!)
         _logger.LogInformation("--- WEBHOOK DE BOOKING RECIBIDO ---");
-        _logger.LogInformation("Payload: {Payload}", rawPayload);
+        
+        // 2. Guardar en el Inbox para procesarlo después (Patrón Inbox)
+        var inboundEvent = new IntegrationInboundEvent
+        {
+            Channel = BookingChannel.BookingCom,
+            Payload = rawPayload,
+            IsProcessed = false
+        };
 
-        // 3. TO-DO (Próximo paso): Guardar 'rawPayload' en una tabla 'IntegrationInboundEvents' (Inbox Pattern)
+        _context.IntegrationInboundEvents.Add(inboundEvent);
+        await _context.SaveChangesAsync();
 
-        // 4. Responder INMEDIATAMENTE con un 200 OK para que Booking sepa que lo recibimos
+        // 3. Responder rápido a Booking.com para que no asuma timeout (Overbooking prevention)
         return Ok(new { status = "success", message = "Payload received and queued for processing" });
     }
 }
