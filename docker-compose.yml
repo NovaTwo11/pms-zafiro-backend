@@ -1,0 +1,40 @@
+﻿services:
+  # Servicio de Base de Datos
+  pms-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: pms_zafiro_db
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${DB_PASSWORD} # Variable de entorno
+    ports:
+      - "1433:1433" # Solo ábrelo si necesitas conectarte desde tu PC local (SSMS)
+    volumes:
+      - mssql_data:/var/opt/mssql # Persistencia de datos
+    networks:
+      - pms-network
+    restart: always
+
+  # Servicio de API (.NET)
+  pms-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pms_zafiro_api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      # Cadena de conexión apuntando al nombre del servicio 'pms-db'
+      - ConnectionStrings__DefaultConnection=Server=pms-db;Database=PmsZafiroDb;User Id=sa;Password=${DB_PASSWORD};TrustServerCertificate=True;
+    ports:
+      - "8080:8080" # Puerto interno del contenedor expuesto al VPS
+    depends_on:
+      - pms-db
+    networks:
+      - pms-network
+    restart: always
+
+volumes:
+  mssql_data:
+
+networks:
+  pms-network:
+    driver: bridge
