@@ -150,6 +150,10 @@ public class ReservationsController : ControllerBase
             foreach (var rg in r.ReservationGuests)
             {
                 if (rg.Guest == null) continue;
+                
+                // CORRECCIÓN: Omitir al titular para que no aparezca como acompañante
+                if (rg.Guest.Id == r.GuestId) continue; 
+
                 var (n1, n2) = SplitName(rg.Guest.FirstName);
                 var (a1, a2) = SplitName(rg.Guest.LastName);
 
@@ -554,6 +558,10 @@ public class ReservationsController : ControllerBase
             foreach (var compDto in dto.Companions)
             {
                 if (string.IsNullOrWhiteSpace(compDto.NumeroId)) continue;
+
+                // CORRECCIÓN: Bloqueo de seguridad. Evita que un error en el frontend 
+                // cause que un acompañante sobrescriba los datos del titular.
+                if (compDto.NumeroId == dto.NumeroId) continue;
 
                 var existingGuest = await _context.Guests.FirstOrDefaultAsync(g => g.DocumentNumber == compDto.NumeroId);
 
