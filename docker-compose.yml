@@ -6,6 +6,7 @@
       dockerfile: Dockerfile
     container_name: pms_zafiro_api
     environment:
+      - FrontendUrl=https://hotelzafiro.online
       - ASPNETCORE_ENVIRONMENT=Production
       # Conexión interna directa a la base de datos (nombre del servicio 'pms-db')
       - ConnectionStrings__DefaultConnection=Host=pms-db;Port=5432;Database=zafiro_db;Username=postgres;Password=${DB_PASSWORD}
