@@ -2,7 +2,7 @@ name: Deploy to VPS Hostinger
 
 on:
   push:
-    branches: [ "main" ] # Se activa solo al hacer push a main
+    branches: [ "main" ]
 
 jobs:
   deploy:
@@ -19,14 +19,19 @@ jobs:
         password: ${{ secrets.VPS_PASSWORD }}
         port: 22
         script: |
-          # Entrar a la carpeta del proyecto
           cd ~/pms-zafiro-backend
           
-          # 1. Bajar los últimos cambios de GitHub
-          git pull origin main
+          # --- CAMBIO CRÍTICO AQUÍ ---
+          # 1. Traer toda la historia nueva sin mezclar aún
+          git fetch origin main
           
-          # 2. Reconstruir y reiniciar los contenedores (sin borrar datos)
+          # 2. OBLIGAR al servidor a ser idéntico a GitHub (Borra cambios locales)
+          git reset --hard origin/main
+          # ---------------------------
+          
+          # 3. Reconstruir y reiniciar
+          docker compose down
           docker compose up -d --build
           
-          # 3. Limpiar imágenes viejas para no llenar el disco
+          # 4. Limpieza
           docker image prune -f
