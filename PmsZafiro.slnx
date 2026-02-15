@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/.github/" />
+  <Folder Name="/.github/workflows/">
+    <File Path="src/deploy.yml" />
+  </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/API/">
     <Project Path="src/API/PmsZafiro.API.csproj" />
