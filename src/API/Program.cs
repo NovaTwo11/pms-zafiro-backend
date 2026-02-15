@@ -9,6 +9,8 @@ using System.Text;
 using PmsZafiro.Infrastructure.Services;
 using PmsZafiro.API.Workers; // Asegúrate de que el namespace coincida con tu HousekeepingWorker
 
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // --- 1. CONFIGURACIÓN DE BASE DE DATOS Y VARABLES ---
