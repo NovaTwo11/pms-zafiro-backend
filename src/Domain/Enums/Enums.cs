@@ -90,3 +90,18 @@ public enum BookingChannel
     Airbnb = 4
 }
 
+public enum IntegrationStatus
+{
+    Pending,    // Listo para ser procesado por el Worker
+    Processed,  // Enviado con éxito a Booking
+    Failed,     // Falló (se debe reintentar)
+    Ignored     // No requiere envío (ej. reserva antigua)
+}
+
+// --- NUEVO: Tipo de actualización ---
+public enum IntegrationEventType
+{
+    AvailabilityUpdate, // Cambio de inventario (ARI)
+    RateUpdate,         // Cambio de precios
+    InventoryUpdate     // Cierre de ventas / Restricciones
+}

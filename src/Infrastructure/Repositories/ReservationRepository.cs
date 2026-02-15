@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Application.DTOs.Reservations;
 using PmsZafiro.Application.Interfaces;
@@ -25,49 +26,31 @@ public class ReservationRepository : IReservationRepository
             .ToListAsync();
     }
 
-    // --- NUEVO MÉTODO: Trae reservas + Saldo Real calculado en SQL ---
     public async Task<IEnumerable<ReservationDto>> GetReservationsWithLiveBalanceAsync()
     {
         var query = from r in _context.Reservations.AsNoTracking()
-                    
-                    // 1. LEFT JOIN PARA EL HUÉSPED (Evita que los bloqueos desaparezcan)
                     join g in _context.Guests on r.GuestId equals g.Id into guestGroup
                     from guest in guestGroup.DefaultIfEmpty()
-                    
-                    // 2. LEFT JOIN PARA EL FOLIO
                     join f in _context.Folios.OfType<GuestFolio>() on r.Id equals f.ReservationId into folioGroup
                     from folio in folioGroup.DefaultIfEmpty()
-                    
                     orderby r.CreatedAt descending
                     select new ReservationDto
                     {
                         Id = r.Id,
                         Code = r.ConfirmationCode,
                         Status = r.Status.ToString(),
-                        
-                        // CORRECCIÓN CS0266: Asignar un Guid vacío si es null (Bloqueos)
-                        MainGuestId = r.GuestId ?? Guid.Empty, 
-                        
-                        // Manejo seguro por si es un bloqueo y no tiene huésped asociado
+                        MainGuestId = r.GuestId ?? Guid.Empty,
                         MainGuestName = guest != null ? (guest.FirstName + " " + guest.LastName) : "Bloqueo/Mantenimiento",
-                        
                         CheckIn = r.CheckIn,
                         CheckOut = r.CheckOut,
-                        // Cálculo seguro de noches
                         Nights = (r.CheckOut.Date - r.CheckIn.Date).Days == 0 ? 1 : (r.CheckOut.Date - r.CheckIn.Date).Days,
                         TotalAmount = r.TotalAmount,
-
-                        // Calcular Saldo Real (Debe - Haber)
                         Balance = folio != null ? folio.Transactions.Sum(t => 
                             (t.Type == TransactionType.Charge || t.Type == TransactionType.Expense) ? t.Amount : 
                             (t.Type == TransactionType.Payment || t.Type == TransactionType.Income) ? -t.Amount : 0) : 0,
-
-                        // Calcular Total Pagado
                         PaidAmount = folio != null ? folio.Transactions
                             .Where(t => t.Type == TransactionType.Payment || t.Type == TransactionType.Income)
                             .Sum(t => t.Amount) : 0,
-
-                        // Mapeo de Segmentos
                         Segments = r.Segments.Select(s => new ReservationSegmentDto 
                         {
                             RoomId = s.RoomId,
@@ -88,9 +71,15 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(r => r.Id == id);
     }
 
+    // --- MÉTODOS DE ESCRITURA (CON OUTBOX PATTERN) ---
+
     public async Task<Reservation> CreateAsync(Reservation reservation)
     {
         await _context.Reservations.AddAsync(reservation);
+        
+        // OUTBOX: Generar evento de cambio de inventario
+        await GenerateAvailabilityEventsAsync(reservation);
+
         await _context.SaveChangesAsync();
         return reservation;
     }
@@ -98,6 +87,10 @@ public class ReservationRepository : IReservationRepository
     public async Task UpdateAsync(Reservation reservation)
     {
         _context.Reservations.Update(reservation);
+        
+        // OUTBOX: Al actualizar (cancelar, cambiar fechas), el inventario cambia
+        await GenerateAvailabilityEventsAsync(reservation);
+
         await _context.SaveChangesAsync();
     }
 
@@ -125,6 +118,9 @@ public class ReservationRepository : IReservationRepository
                 {
                     _context.Rooms.Update(room);
                 }
+
+                // OUTBOX: Check-out anticipado libera inventario
+                await GenerateAvailabilityEventsAsync(reservation);
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -159,6 +155,9 @@ public class ReservationRepository : IReservationRepository
                 _context.Rooms.Update(room);
                 await _context.Folios.AddAsync(newFolio);
 
+                // OUTBOX: Por seguridad, notificamos cambios en check-in
+                await GenerateAvailabilityEventsAsync(reservation);
+
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -168,5 +167,56 @@ public class ReservationRepository : IReservationRepository
                 throw;
             }
         });
+    }
+
+    // --- LÓGICA PRIVADA DEL OUTBOX ---
+    private async Task GenerateAvailabilityEventsAsync(Reservation reservation)
+    {
+        // Validación defensiva: Si no hay segmentos cargados, no podemos calcular impacto
+        if (reservation.Segments == null || !reservation.Segments.Any()) return;
+
+        // Obtenemos los IDs de las habitaciones
+        var roomIds = reservation.Segments.Select(s => s.RoomId).Distinct().ToList();
+        
+        // Cargamos información de las habitaciones para obtener la CATEGORÍA
+        // Usamos ChangeTracker o DB directa para asegurar que tenemos el dato
+        var roomsInfo = await _context.Rooms
+            .Where(r => roomIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => r.Category);
+
+        // Agrupamos por Categoría (String)
+        var segmentsByCategory = reservation.Segments
+            .GroupBy(s => roomsInfo.ContainsKey(s.RoomId) ? roomsInfo[s.RoomId] : "Unknown");
+
+        foreach (var group in segmentsByCategory)
+        {
+            var category = group.Key;
+            if (category == "Unknown") continue;
+
+            // Calculamos el rango de fechas total afectado
+            var minDate = group.Min(s => s.CheckIn);
+            var maxDate = group.Max(s => s.CheckOut);
+
+            var payloadObj = new
+            {
+                InternalCategory = category, // Ej: "Doble"
+                StartDate = minDate,
+                EndDate = maxDate,
+                ReservationId = reservation.Id,
+                Trigger = "ReservationChange"
+            };
+
+            var outboundEvent = new IntegrationOutboundEvent
+            {
+                Id = Guid.NewGuid(),
+                EventType = IntegrationEventType.AvailabilityUpdate,
+                Payload = JsonSerializer.Serialize(payloadObj),
+                Status = IntegrationStatus.Pending,
+                CreatedAt = DateTimeOffset.UtcNow,
+                RetryCount = 0
+            };
+
+            await _context.Set<IntegrationOutboundEvent>().AddAsync(outboundEvent);
+        }
     }
 }

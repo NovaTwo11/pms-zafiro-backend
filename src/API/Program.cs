@@ -67,6 +67,8 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     });
+// --- 4.5 CLIENTE HTTP (NUEVO) ---
+builder.Services.AddHttpClient();
 
 // --- 5. INYECCIÓN DE DEPENDENCIAS (CAPA DE INFRAESTRUCTURA & APLICACIÓN) ---
 builder.Services.AddScoped<IReservationRepository, ReservationRepository>();
@@ -84,6 +86,7 @@ builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 // Workers (Tareas en segundo plano)
 builder.Services.AddHostedService<HousekeepingWorker>();
 builder.Services.AddHostedService<BookingIntegrationWorker>();
+builder.Services.AddHostedService<BookingSyncWorker>();
 
 var app = builder.Build();
 

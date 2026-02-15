@@ -22,6 +22,7 @@ public class PmsDbContext : DbContext
     public DbSet<RoomPriceOverride> RoomPriceOverrides { get; set; }
     public DbSet<ChannelRoomMapping> ChannelRoomMappings { get; set; }
     public DbSet<IntegrationInboundEvent> IntegrationInboundEvents { get; set; }
+    
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
