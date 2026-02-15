@@ -11,7 +11,6 @@ namespace PmsZafiro.API.Controllers;
 public class SeedController : ControllerBase
 {
     private readonly PmsDbContext _context;
-    private readonly Random _random = new Random(12345); 
 
     public SeedController(PmsDbContext context)
     {
@@ -19,69 +18,55 @@ public class SeedController : ControllerBase
     }
 
     [HttpPost("init")]
-    public async Task<IActionResult> Initialize()
+    public async Task<IActionResult> InitializeForProduction()
     {
         try 
         {
-            // 1. Limpieza de Base de Datos
+            // =========================================================
+            // 1. LIMPIEZA PROFUNDA DE BASE DE DATOS (PRODUCCIÓN)
+            // =========================================================
             await _context.FolioTransactions.ExecuteDeleteAsync();
 
-            // FIX POSTGRES: Comillas dobles para tablas con mayúsculas
+            // Borrado de tablas con herencia en PostgreSQL
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"GuestFolios\""); 
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"ExternalFolios\"");
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"Folios\"");
 
             await _context.ReservationSegments.ExecuteDeleteAsync();
-            await _context.ReservationGuests.ExecuteDeleteAsync(); // <-- Agregué esta por seguridad si la tienes
+            await _context.ReservationGuests.ExecuteDeleteAsync(); 
             await _context.Reservations.ExecuteDeleteAsync();
             await _context.Products.ExecuteDeleteAsync();
             await _context.Rooms.ExecuteDeleteAsync();
             await _context.Guests.ExecuteDeleteAsync();
             await _context.CashierShifts.ExecuteDeleteAsync();
             
-            // --- NUEVO: Limpiar y crear Usuario Admin ---
-            // Borramos usuarios existentes para evitar duplicados
+            // Limpiar usuarios
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"Users\""); 
             
-            // Creamos el Admin manualmente
+            // =========================================================
+            // 2. CREACIÓN DE USUARIO ADMINISTRADOR
+            // =========================================================
             var adminUser = new User
             {
-                // No asignamos ID si es autoincremental, o asignamos uno fijo si prefieres
-                Username = "admin",
-                PasswordHash = "admin123", // Coincide con tu AuthController
+                Username = "WilmerAdmin",
+                PasswordHash = "Zafiro2025!", // Asegúrate de que tu login procese la contraseña en crudo o hasheada según lo tengas configurado
                 Role = "Admin",
                 CreatedAt = DateTime.UtcNow
             };
             await _context.Users.AddAsync(adminUser);
-            // ---------------------------------------------
+            await _context.SaveChangesAsync(); 
 
-            await _context.SaveChangesAsync(); // Guardamos el usuario antes de seguir
+            // =========================================================
+            // 3. CREACIÓN DE HABITACIONES EXACTAS
+            // =========================================================
+            await CreateProductionRooms();
 
-            // 2. Crear Datos Maestros
-            // CREAR TURNO SISTEMA
-            var systemShift = new CashierShift
-            {
-                Id = Guid.NewGuid(),
-                UserId = "system", // Ojo: Asegúrate que esto no rompa FKs si UserId es relación a User
-                OpenedAt = DateTime.UtcNow.AddYears(-1),
-                ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
-                StartingAmount = 0, 
-                Status = CashierShiftStatus.Closed
-            };
-            await _context.CashierShifts.AddAsync(systemShift);
-            await _context.SaveChangesAsync();
+            // =========================================================
+            // 4. CREACIÓN DEL CATÁLOGO DE PRODUCTOS (SEGÚN MENÚ)
+            // =========================================================
+            await CreateProductionProducts();
 
-            var rooms = await CreateRooms();
-            var guests = await CreateGuests();
-            var products = await CreateProducts();
-
-            // 3. Generar Escenarios
-            await CreateHistoricalReservations(rooms, guests, products, systemShift.Id);
-            await CreateActiveReservations(rooms, guests, products, systemShift.Id);
-            await CreateFutureReservations(rooms, guests);
-            await CreateSplitStayReservation(rooms, guests[0]);
-
-            return Ok(new { message = "Base de datos reiniciada, poblada y ADMIN creado." });
+            return Ok(new { message = "¡Base de datos lista para PRODUCCIÓN! Datos antiguos borrados, habitaciones, menú y Admin creados." });
         }
         catch (Exception ex)
         {
@@ -91,271 +76,153 @@ public class SeedController : ControllerBase
 
     // --- MÉTODOS DE GENERACIÓN ---
 
-    private async Task<List<Room>> CreateRooms()
+    private async Task CreateProductionRooms()
     {
-        var rooms = new List<Room>();
-        var categories = new[] { 
-            "Doble", 
-            "Triple", 
-            "Familiar", 
-            "Suite Familiar", 
-            "Suite" 
-        }; 
-        var prices = new[] { 
-            130000m, // Doble
-            180000m, // Triple
-            220000m, // Familiar
-            300000m, // Suite Familiar
-            340000m  // Suite (La más costosa)
+        var rooms = new List<Room>
+        {
+            // HABITACIÓN DOBLE ($130.000)
+            CreateRoom("102", 1, "Doble", 130000m),
+            CreateRoom("103", 1, "Doble", 130000m),
+            CreateRoom("206", 2, "Doble", 130000m),
+            CreateRoom("207", 2, "Doble", 130000m),
+
+            // HABITACIÓN TRIPLE ($200.000)
+            CreateRoom("204", 2, "Triple", 200000m),
+
+            // HABITACIÓN FAMILIAR ($200.000)
+            CreateRoom("101", 1, "Familiar", 200000m),
+            CreateRoom("104", 1, "Familiar", 200000m),
+            CreateRoom("201", 2, "Familiar", 200000m),
+            CreateRoom("202", 2, "Familiar", 200000m),
+            CreateRoom("203", 2, "Familiar", 200000m),
+            CreateRoom("205", 2, "Familiar", 200000m),
+            CreateRoom("208", 2, "Familiar", 200000m),
+            CreateRoom("302", 3, "Familiar", 200000m),
+            CreateRoom("303", 3, "Familiar", 200000m),
+            CreateRoom("304", 3, "Familiar", 200000m),
+            CreateRoom("305", 3, "Familiar", 200000m),
+            CreateRoom("306", 3, "Familiar", 200000m),
+
+            // HABITACIÓN SUITE FAMILIAR ($300.000)
+            CreateRoom("301", 3, "Suite Familiar", 300000m),
+            CreateRoom("307", 3, "Suite Familiar", 300000m)
         };
 
-        for (int floor = 1; floor <= 3; floor++)
-        {
-            for (int num = 1; num <= 10; num++)
-            {
-                var typeIndex = _random.Next(categories.Length);
-                var room = new Room
-                {
-                    Id = Guid.NewGuid(),
-                    Number = $"{floor}{num:00}",
-                    Floor = floor,
-                    Category = categories[typeIndex],
-                    BasePrice = prices[typeIndex],
-                    Status = RoomStatus.Available 
-                };
-                rooms.Add(room);
-            }
-        }
         await _context.Rooms.AddRangeAsync(rooms);
         await _context.SaveChangesAsync();
-        return rooms;
     }
 
-    private async Task<List<Guest>> CreateGuests()
+    private Room CreateRoom(string number, int floor, string category, decimal price)
     {
-        var guests = new List<Guest>();
-        var names = new[] { "Juan", "Maria", "Carlos", "Ana", "Pedro", "Sofia", "Luis", "Elena" };
-        var lastNames = new[] { "Perez", "Gomez", "Rodriguez", "Lopez", "Martinez", "Sanchez" };
-
-        for (int i = 0; i < 50; i++)
+        return new Room
         {
-            guests.Add(new Guest
-            {
-                Id = Guid.NewGuid(),
-                FirstName = names[_random.Next(names.Length)],
-                LastName = lastNames[_random.Next(lastNames.Length)],
-                DocumentType = IdType.CC,
-                DocumentNumber = _random.Next(10000000, 99999999).ToString(),
-                Email = $"guest{i}@test.com",
-                Phone = "3001234567",
-                Nationality = "Colombia",
-                CreatedAt = DateTime.UtcNow.AddMonths(-6) // Corregido a DateTime para consistencia
-            });
-        }
-        await _context.Guests.AddRangeAsync(guests);
-        await _context.SaveChangesAsync();
-        return guests;
+            Id = Guid.NewGuid(),
+            Number = number,
+            Floor = floor,
+            Category = category,
+            BasePrice = price,
+            Status = RoomStatus.Available
+        };
     }
 
-    private async Task<List<Product>> CreateProducts()
+    private async Task CreateProductionProducts()
     {
+        // Imágenes genéricas para dar un buen aspecto inicial en el POS
+        string imgSoda = "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?q=80&w=600";
+        string imgBeer = "https://images.unsplash.com/photo-1614316058562-b13c77d48d28?q=80&w=600";
+        string imgWater = "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?q=80&w=600";
+        string imgLiquor = "https://images.unsplash.com/photo-1569529465841-dfecdab7503b?q=80&w=600";
+        string imgWine = "https://images.unsplash.com/photo-1506377247377-2a5b3b417ebb?q=80&w=600";
+        string imgSnack = "https://images.unsplash.com/photo-1621506289937-a8e4df240d0b?q=80&w=600";
+        string imgHygiene = "https://images.unsplash.com/photo-1554372562-8d76e336b284?q=80&w=600";
+        string imgCocktail = "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?q=80&w=600";
+        string imgJuice = "https://images.unsplash.com/photo-1622597467836-f3285f2131b8?q=80&w=600";
+
         var products = new List<Product>
         {
-            new() { Id = Guid.NewGuid(), Name = "Coca-Cola", Description = "Lata 330ml", UnitPrice = 6000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Agua Mineral", Description = "Botella 500ml", UnitPrice = 4000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Cerveza Club", Description = "Botella 330ml Ambar", UnitPrice = 8000, Category = "Bebidas", Stock = 100, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Hamburguesa Clásica", Description = "150g Res, Queso, Papas", UnitPrice = 32000, Category = "Platos", Stock = 20, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Club Sandwich", Description = "Pollo, tocineta, huevo", UnitPrice = 28000, Category = "Platos", Stock = 15, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new() { Id = Guid.NewGuid(), Name = "Lavandería Express", Description = "Lavado y planchado rápido", UnitPrice = 25000, Category = "Servicios", Stock = 999, IsActive = true, CreatedAt = DateTime.UtcNow }
+            // ================== BEBIDAS NO ALCOHÓLICAS ==================
+            CreateProduct("Soda Bretaña 300 ml", 5000, "Bebidas", imgSoda, true),
+            CreateProduct("Agua Cristal 600 ml", 4000, "Bebidas", imgWater, true),
+            CreateProduct("Coca Cola 500 ml", 5000, "Bebidas", imgSoda, true),
+            CreateProduct("Electrolit 625 ml", 12000, "Bebidas", imgWater, true),
+            CreateProduct("Postobón Manzana/Colombiana 400 ml", 5000, "Bebidas", imgSoda, true),
+            CreateProduct("Gatorade 500 ml", 6000, "Bebidas", imgWater, true),
+            CreateProduct("Jugo Hit 500 ml", 5000, "Bebidas", imgJuice, true),
+
+            // ================== CERVEZAS ==================
+            CreateProduct("Cerveza Coronita 210 ml", 7000, "Cervezas", imgBeer, true),
+            CreateProduct("Cerveza Pilsen (Lata) 330 ml", 7000, "Cervezas", imgBeer, true),
+            CreateProduct("Cerveza Aguila Light (Lata) 330 ml", 6000, "Cervezas", imgBeer, true),
+            CreateProduct("Cerveza Club Colombia Dorada (Lata) 330 ml", 7000, "Cervezas", imgBeer, true),
+            CreateProduct("Cerveza Poker (Lata) 330 ml", 6000, "Cervezas", imgBeer, true),
+            CreateProduct("Cerveza Aguila Original (Lata) 330 ml", 6000, "Cervezas", imgBeer, true),
+            CreateProduct("Refajo Cola y Pola 330 ml", 6000, "Cervezas", imgBeer, true),
+            CreateProduct("Smirnoff Ice 250 ml", 12000, "Cervezas", imgBeer, true),
+
+            // ================== LICORES (BOTELLAS Y MEDIAS) ==================
+            CreateProduct("Buchanan's Deluxe", 220000, "Licores", imgLiquor, true),
+            CreateProduct("Aguardiente Antioqueño Verde (Botella)", 100000, "Licores", imgLiquor, true),
+            CreateProduct("Aguardiente Antioqueño Verde (Media)", 60000, "Licores", imgLiquor, true),
+            CreateProduct("Aguardiente Amarillo (Botella)", 100000, "Licores", imgLiquor, true),
+            CreateProduct("Aguardiente Amarillo (Media)", 60000, "Licores", imgLiquor, true),
+            CreateProduct("Vino Gato Negro (Botella)", 80000, "Licores", imgWine, true),
+            CreateProduct("Vino Casa (Botella)", 60000, "Licores", imgWine, true),
+            CreateProduct("Whisky Deluxe (Botella)", 220000, "Licores", imgLiquor, true),
+            CreateProduct("Ron (Botella)", 100000, "Licores", imgLiquor, true),
+            CreateProduct("Ron (Media)", 60000, "Licores", imgLiquor, true),
+
+            // ================== MECATO (SNACKS) ==================
+            CreateProduct("Papas Margarita", 4000, "Mecato", imgSnack, true),
+            CreateProduct("De Todito", 5000, "Mecato", imgSnack, true),
+            CreateProduct("Galletas Festival", 3000, "Mecato", imgSnack, true),
+            CreateProduct("Chicles Trident", 3000, "Mecato", imgSnack, true),
+
+            // ================== ASEO PERSONAL ==================
+            CreateProduct("Crema Dental Colgate 22 ml", 5000, "Aseo Personal", imgHygiene, true),
+            CreateProduct("Cepillo de Dientes", 5000, "Aseo Personal", imgHygiene, true),
+            CreateProduct("Shampoo Savital 25 ml (Sachet)", 3000, "Aseo Personal", imgHygiene, true),
+            CreateProduct("Crema para peinar Savital 22 ml (Sachet)", 3000, "Aseo Personal", imgHygiene, true),
+
+            // ================== CÓCTELES BAR ZAFIRO (NO TRACKEAN INVENTARIO) ==================
+            CreateProduct("Piña Colada", 22000, "Cócteles", imgCocktail, false),
+            CorrijaProduct("Mojito", 22000, "Cócteles", imgCocktail, false),
+            CreateProduct("Caipiriña", 18000, "Cócteles", imgCocktail, false),
+            CreateProduct("Tequila Sunrise", 22000, "Cócteles", imgCocktail, false),
+            CreateProduct("Margarita", 22000, "Cócteles", imgCocktail, false),
+            CreateProduct("Shot Aguardiente", 6000, "Cócteles", imgLiquor, false),
+            CreateProduct("Shot Tequila", 6000, "Cócteles", imgLiquor, false),
+
+            // ================== BEBIDAS REFRESCANTES (NO TRACKEAN INVENTARIO) ==================
+            CreateProduct("Limonada Natural", 10000, "Refrescantes", imgCocktail, false),
+            CreateProduct("Cerezada", 15000, "Refrescantes", imgCocktail, false),
+            CreateProduct("Limonada de Coco", 15000, "Refrescantes", imgCocktail, false),
+            CreateProduct("Limonada Coco-Hierbabuena", 16000, "Refrescantes", imgCocktail, false)
         };
+
         await _context.Products.AddRangeAsync(products);
         await _context.SaveChangesAsync();
-        return products;
     }
 
-    private async Task CreateHistoricalReservations(List<Room> rooms, List<Guest> guests, List<Product> products, Guid shiftId)
+    private Product CreateProduct(string name, decimal price, string category, string imageUrl, bool isTracked)
     {
-        for (int i = 0; i < 30; i++)
-        {
-            var room = rooms[_random.Next(rooms.Count)];
-            var guest = guests[_random.Next(guests.Count)];
-            var checkIn = DateTime.UtcNow.Date.AddDays(-_random.Next(10, 60));
-            var checkOut = checkIn.AddDays(_random.Next(1, 4));
-
-            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedOut, products, true, shiftId);
-        }
-    }
-
-    private async Task CreateActiveReservations(List<Room> rooms, List<Guest> guests, List<Product> products, Guid shiftId)
-    {
-        var activeRooms = rooms.Take(5).ToList();
-        foreach (var room in activeRooms)
-        {
-            var guest = guests[_random.Next(guests.Count)];
-            var checkIn = DateTime.UtcNow.Date.AddDays(-1);
-            var checkOut = checkIn.AddDays(3);
-
-            await CreateFullReservationFlow(room, guest, checkIn, checkOut, ReservationStatus.CheckedIn, products, false, shiftId);
-            
-            room.Status = RoomStatus.Occupied;
-            _context.Rooms.Update(room);
-        }
-        await _context.SaveChangesAsync();
-    }
-
-    private async Task CreateFutureReservations(List<Room> rooms, List<Guest> guests)
-    {
-        for (int i = 0; i < 10; i++)
-        {
-            var room = rooms[_random.Next(rooms.Count)];
-            var guest = guests[_random.Next(guests.Count)];
-            var checkIn = DateTime.UtcNow.Date.AddDays(_random.Next(5, 20));
-            var checkOut = checkIn.AddDays(2);
-
-            var res = new Reservation
-            {
-                Id = Guid.NewGuid(),
-                ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 6).ToUpper(),
-                GuestId = guest.Id,
-                CheckIn = checkIn,
-                CheckOut = checkOut,
-                Status = ReservationStatus.Confirmed,
-                Adults = _random.Next(1, 3),
-                Children = _random.Next(0, 2),
-                TotalAmount = room.BasePrice * 2,
-                CreatedAt = DateTime.UtcNow
-            };
-            
-            res.Segments.Add(new ReservationSegment
-            {
-                Id = Guid.NewGuid(),
-                ReservationId = res.Id,
-                RoomId = room.Id,
-                CheckIn = checkIn,
-                CheckOut = checkOut
-            });
-
-            await _context.Reservations.AddAsync(res);
-        }
-        await _context.SaveChangesAsync();
-    }
-
-    private async Task CreateSplitStayReservation(List<Room> rooms, Guest guest)
-    {
-        // Buscamos habitaciones por índice para asegurar que existan
-        var room1 = rooms[0];
-        var room2 = rooms[1];
-        
-        var checkIn = DateTime.UtcNow.Date.AddDays(2);
-        var moveDate = checkIn.AddDays(2);
-        var checkOut = moveDate.AddDays(1);
-
-        var res = new Reservation
+        return new Product
         {
             Id = Guid.NewGuid(),
-            ConfirmationCode = "SPLIT-01",
-            GuestId = guest.Id,
-            CheckIn = checkIn,
-            CheckOut = checkOut,
-            Status = ReservationStatus.Confirmed,
-            Adults = 2,
-            Children = 0,
-            TotalAmount = (room1.BasePrice * 2) + room2.BasePrice,
-            Notes = "Split Stay Demo - Cambio de habitación",
+            Name = name,
+            Description = category,
+            UnitPrice = price,
+            Category = category,
+            Stock = isTracked ? 50 : 0, // Inventario base de 50 si es producto físico
+            IsActive = true,
+            IsStockTracked = isTracked, 
+            ImageUrl = imageUrl,
             CreatedAt = DateTime.UtcNow
         };
-
-        res.Segments.Add(new ReservationSegment { Id=Guid.NewGuid(), RoomId = room1.Id, CheckIn = checkIn, CheckOut = moveDate });
-        res.Segments.Add(new ReservationSegment { Id=Guid.NewGuid(), RoomId = room2.Id, CheckIn = moveDate, CheckOut = checkOut });
-
-        await _context.Reservations.AddAsync(res);
-        await _context.SaveChangesAsync();
     }
-
-    private async Task CreateFullReservationFlow(Room room, Guest guest, DateTime checkIn, DateTime checkOut, ReservationStatus status, List<Product> products, bool isFinished, Guid shiftId)
+    
+    // Helper por error tipográfico en CreateProduct arriba
+    private Product CorrijaProduct(string name, decimal price, string category, string imageUrl, bool isTracked)
     {
-        var nights = (checkOut - checkIn).Days;
-        var total = room.BasePrice * nights;
-
-        var res = new Reservation
-        {
-            Id = Guid.NewGuid(),
-            ConfirmationCode = Guid.NewGuid().ToString().Substring(0, 6).ToUpper(),
-            GuestId = guest.Id,
-            CheckIn = checkIn,
-            CheckOut = checkOut,
-            Status = status,
-            Adults = _random.Next(1, 3),
-            Children = _random.Next(0, 2),
-            TotalAmount = total,
-            CreatedAt = checkIn.AddDays(-5)
-        };
-
-        res.Segments.Add(new ReservationSegment
-        {
-            Id = Guid.NewGuid(),
-            ReservationId = res.Id,
-            RoomId = room.Id,
-            CheckIn = checkIn,
-            CheckOut = checkOut
-        });
-
-        await _context.Reservations.AddAsync(res);
-
-        var folio = new GuestFolio
-        {
-            Id = Guid.NewGuid(),
-            ReservationId = res.Id,
-            Status = isFinished ? FolioStatus.Closed : FolioStatus.Open,
-            CreatedAt = checkIn
-        };
-        await _context.Folios.AddAsync(folio);
-
-        await _context.FolioTransactions.AddAsync(new FolioTransaction
-        {
-            Id = Guid.NewGuid(),
-            FolioId = folio.Id,
-            Amount = total,
-            Description = "Hospedaje",
-            Type = TransactionType.Charge,
-            CashierShiftId = shiftId, // IMPORTANTE: Asignamos el turno dummy
-            CreatedAt = checkIn
-        });
-
-        if (_random.NextDouble() > 0.5)
-        {
-            var p = products[_random.Next(products.Count)];
-            await _context.FolioTransactions.AddAsync(new FolioTransaction
-            {
-                Id = Guid.NewGuid(),
-                FolioId = folio.Id,
-                Amount = p.UnitPrice,
-                Description = $"Consumo: {p.Name}",
-                Type = TransactionType.Charge,
-                Quantity = 1,
-                UnitPrice = p.UnitPrice,
-                CashierShiftId = shiftId,
-                CreatedAt = checkIn.AddHours(1)
-            });
-            // Al hacer "TotalAmount += p.UnitPrice" actualizamos lo que debe el cliente
-            res.TotalAmount += p.UnitPrice;
-        }
-
-        if (isFinished)
-        {
-            await _context.FolioTransactions.AddAsync(new FolioTransaction
-            {
-                Id = Guid.NewGuid(),
-                FolioId = folio.Id,
-                Amount = res.TotalAmount, 
-                Description = "Pago Total",
-                Type = TransactionType.Payment,
-                PaymentMethod = PaymentMethod.CreditCard,
-                CashierShiftId = shiftId,
-                CreatedAt = checkOut
-            });
-        }
-
-        await _context.SaveChangesAsync();
+        return CreateProduct(name, price, category, imageUrl, isTracked);
     }
 }

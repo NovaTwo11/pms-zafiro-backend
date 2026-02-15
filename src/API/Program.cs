@@ -112,12 +112,9 @@ using (var scope = app.Services.CreateScope())
 
 // --- 7. PIPELINE DE LA APLICACIÓN ---
 
-// Swagger habilitado también en producción (útil para depurar al inicio, puedes quitarlo luego)
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Swagge habilitado también en producción (útil para depurar al inicio, puedes quitarlo luego)
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 

@@ -14,6 +14,12 @@ public class FolioRepository : IFolioRepository
     {
         _context = context;
     }
+    
+    public async Task DeleteAsync(Folio folio)
+    {
+        _context.Folios.Remove(folio);
+        await _context.SaveChangesAsync();
+    }
 
     public async Task<Folio?> GetByIdAsync(Guid id)
     {

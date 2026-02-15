@@ -252,6 +252,28 @@ public class FoliosController : ControllerBase
         
         return Ok(result);
     }
+    
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteExternalFolio(Guid id)
+    {
+        var folio = await _repository.GetByIdAsync(id);
+        if (folio == null) return NotFound("Folio no encontrado.");
+
+        // 1er Candado: Solo permitir borrar folios externos
+        if (folio is not ExternalFolio)
+            return BadRequest(new { message = "Operación denegada. Solo se pueden eliminar folios de pasadías/externos." });
+
+        // 2do Candado: No borrar si hay dinero de por medio sin cuadrar
+        var balance = await _repository.GetFolioBalanceAsync(id);
+        if (balance != 0)
+            return BadRequest(new { message = "No se puede eliminar un folio con saldo a favor o en contra." });
+
+        // Llama al método de borrado de tu repositorio
+        // (Nota: Asegúrate de tener DeleteAsync o RemoveAsync definido en tu IFolioRepository)
+        await _repository.DeleteAsync(folio); 
+        
+        return Ok(new { message = "Folio externo eliminado correctamente." });
+    }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<FolioDto>> GetById(Guid id)

@@ -18,4 +18,7 @@ public interface IFolioRepository
     
     Task<IEnumerable<GuestFolio>> GetActiveGuestFoliosAsync();
     Task<IEnumerable<ExternalFolio>> GetActiveExternalFoliosAsync();
+    Task DeleteAsync(Folio folio);
+    
+    
 }
