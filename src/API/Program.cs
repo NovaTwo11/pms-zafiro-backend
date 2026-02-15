@@ -15,7 +15,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Se toma la conexión de las variables de entorno (inyectadas por Docker) o appsettings.json
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<PmsDbContext>(options =>
-    options.UseSqlServer(connectionString));
+    options.UseNpgsql(connectionString));
 
 var jwtKey = builder.Configuration["JwtSettings:Key"] ?? throw new Exception("La clave JWT no está configurada.");
 
