@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PmsZafiro.Infrastructure.Persistence;
 using PmsZafiro.Domain.Enums;
-using PmsZafiro.Domain.Entities; // Necesario para ReservationSegment
+using PmsZafiro.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace PmsZafiro.API.Workers;
@@ -27,52 +27,57 @@ public class HousekeepingWorker : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                // Calcular tiempo hasta las 6:00 AM (Hora configurable idealmente)
-                var now = DateTime.Now;
-                var nextRun = now.Date.AddHours(6);
-                if (now > nextRun) nextRun = nextRun.AddDays(1);
-                var delay = nextRun - now;
+                // 1. Usar SIEMPRE la hora de Colombia (UTC-5) para evitar fallos del servidor VPS
+                var nowCol = DateTime.UtcNow.AddHours(-5);
+                var nextRunCol = nowCol.Date.AddHours(6); // 6:00 AM de hoy
+                
+                if (nowCol >= nextRunCol) 
+                {
+                    nextRunCol = nextRunCol.AddDays(1); // Si ya pasaron las 6 AM, programar para mañana
+                }
+                
+                var delay = nextRunCol - nowCol;
 
-                _logger.LogInformation($"Próxima limpieza automática en: {delay.TotalHours:F2} horas ({nextRun:dd/MM HH:mm})");
+                _logger.LogInformation($"Próxima limpieza automática en: {delay.TotalHours:F2} horas ({nextRunCol:dd/MM HH:mm} - Hora Colombia)");
 
-                // Esperar
+                // Esperar hasta las 6:00 AM exactas
                 await Task.Delay(delay, stoppingToken);
 
-                // Ejecutar la tarea de marcación automática
+                // 2. Ejecutar la marcación de limpieza
                 using (var scope = _serviceProvider.CreateScope())
                 {
                     var context = scope.ServiceProvider.GetRequiredService<PmsDbContext>();
-                    var today = DateTime.UtcNow.Date;
 
-                    // FIX: Incluir Segmentos -> Habitación en lugar de Habitación directa
-                    var reservationsEndingToday = await context.Reservations
-                        .Include(r => r.Segments)
-                        .ThenInclude(s => s.Room)
-                        .Where(r => r.Status == ReservationStatus.CheckedIn && r.CheckOut.Date <= today)
+                    // Buscar TODAS las habitaciones que tengan huéspedes en casa en este momento
+                    var activeSegments = await context.Set<ReservationSegment>()
+                        .Include(s => s.Room)
+                        .Include(s => s.Reservation)
+                        .Where(s => s.Reservation.Status == ReservationStatus.CheckedIn &&
+                                    s.CheckIn <= DateTime.UtcNow &&
+                                    s.CheckOut >= DateTime.UtcNow.AddMinutes(-10)) // Margen de seguridad
                         .ToListAsync(stoppingToken);
 
-                    foreach (var res in reservationsEndingToday)
+                    int updatedCount = 0;
+                    foreach (var segment in activeSegments)
                     {
-                        // Buscamos la habitación del último segmento (la que se está liberando)
-                        var lastSegment = res.Segments
-                            .OrderByDescending(s => s.CheckOut)
-                            .FirstOrDefault();
-
-                        if (lastSegment != null && lastSegment.Room != null && lastSegment.Room.Status != RoomStatus.Dirty)
+                        // Si la habitación no está en mantenimiento y no está sucia, la marcamos
+                        if (segment.Room != null && segment.Room.Status != RoomStatus.Maintenance && segment.Room.Status != RoomStatus.Dirty)
                         {
-                            lastSegment.Room.Status = RoomStatus.Dirty;
-                            _logger.LogInformation($"Habitación {lastSegment.Room.Number} marcada SUCIA (Check-out vencido de reserva {res.ConfirmationCode}).");
+                            segment.Room.Status = RoomStatus.Dirty;
+                            updatedCount++;
+                            _logger.LogInformation($"Habitación {segment.Room.Number} marcada SUCIA automáticamente (Huésped en casa).");
                         }
                     }
 
-                    if (reservationsEndingToday.Any())
+                    if (updatedCount > 0)
                     {
                         await context.SaveChangesAsync(stoppingToken);
+                        _logger.LogInformation($"[OK] Se marcaron {updatedCount} habitaciones como sucias a las 6:00 AM.");
                     }
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (TaskCanceledException)
         {
             _logger.LogInformation("Housekeeping Worker detenido correctamente.");
         }
