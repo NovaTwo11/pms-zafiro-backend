@@ -45,7 +45,7 @@ public class ReservationRepository : IReservationRepository
                         CheckIn = r.CheckIn,
                         CheckOut = r.CheckOut,
                         // Cálculo seguro de noches
-                        Nights = EF.Functions.DateDiffDay(r.CheckIn, r.CheckOut) == 0 ? 1 : EF.Functions.DateDiffDay(r.CheckIn, r.CheckOut),
+                        Nights = (r.CheckOut.Date - r.CheckIn.Date).Days == 0 ? 1 : (r.CheckOut.Date - r.CheckIn.Date).Days,
                         TotalAmount = r.TotalAmount,
 
                         // 1. Calcular Saldo Real (Debe - Haber)

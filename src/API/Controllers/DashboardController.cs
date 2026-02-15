@@ -21,8 +21,9 @@ public class DashboardController : ControllerBase
     [HttpGet("stats")]
     public async Task<ActionResult<DashboardStatsDto>> GetStats()
     {
-        var today = DateTime.UtcNow.Date; 
-        var tomorrow = today.AddDays(1); // Usamos un rango para evitar problemas de traducción SQL
+        // Usamos DateTime.Now para evitar líos de UTC por ahora
+        var today = DateTime.Now.Date; 
+        var tomorrow = today.AddDays(1); 
 
         // 1. Métricas de Habitaciones
         var rooms = await _context.Rooms.ToListAsync();
@@ -33,15 +34,16 @@ public class DashboardController : ControllerBase
             ? (double)occupiedCount / totalRooms * 100 
             : 0;
 
-        // 2. Métricas de Reservas (FIX POSTGRES: Usamos rangos >= y <)
+        // 2. Métricas de Reservas
+        // FIX: Usamos rangos (>= hoy Y < mañana) en lugar de .Date == today
         var checkInsPending = await _context.Reservations
             .CountAsync(r => r.CheckIn >= today && r.CheckIn < tomorrow && r.Status == ReservationStatus.Confirmed);
 
         var checkOutsPending = await _context.Reservations
             .CountAsync(r => r.CheckOut >= today && r.CheckOut < tomorrow && r.Status == ReservationStatus.CheckedIn);
 
-        // 3. Métricas Financieras (FIX POSTGRES)
-        var totalRevenue = await _context.FolioTransactions // Acceso directo al DbSet es más limpio
+        // 3. Métricas Financieras
+        var totalRevenue = await _context.FolioTransactions
             .Where(t => t.Type == TransactionType.Payment && t.CreatedAt >= today && t.CreatedAt < tomorrow)
             .SumAsync(t => t.Amount);
 
