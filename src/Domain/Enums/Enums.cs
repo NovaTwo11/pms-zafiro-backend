@@ -82,3 +82,11 @@ public enum TransactionType
     Income = 3    // Ingreso manual a caja (Entrada extra) <--- NECESARIO
 }
 
+public enum BookingChannel
+{
+    Direct = 1,
+    BookingCom = 2,
+    Expedia = 3,
+    Airbnb = 4
+}
+

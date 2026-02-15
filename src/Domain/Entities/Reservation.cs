@@ -1,3 +1,4 @@
+// PmsZafiro.Domain/Entities/Reservation.cs
 using PmsZafiro.Domain.Enums;
 
 namespace PmsZafiro.Domain.Entities;
@@ -23,4 +24,10 @@ public class Reservation
     public string? Notes { get; set; }
     
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // --- NUEVOS CAMPOS OTA (INTEGRACIÓN BOOKING) ---
+    public BookingChannel Channel { get; set; } = BookingChannel.Direct;
+    public string? ExternalReservationId { get; set; } 
+    public string? ExternalStatus { get; set; }
+    public decimal? ChannelCommission { get; set; } 
 }

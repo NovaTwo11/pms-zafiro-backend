@@ -1,4 +1,5 @@
-﻿using PmsZafiro.Domain.Enums;
+﻿// PmsZafiro.Domain/Entities/Guest.cs
+using PmsZafiro.Domain.Enums;
 
 namespace PmsZafiro.Domain.Entities;
 
@@ -13,6 +14,11 @@ public class Guest
     public string DocumentNumber { get; set; } = string.Empty;
     
     public string Email { get; set; } = string.Empty;
+    
+    // --- NUEVO CAMPO OTA ---
+    // Correo enmascarado de la OTA (ej. xxx@guest.booking.com)
+    public string? AliasEmail { get; set; } 
+    
     public string Phone { get; set; } = string.Empty;
     public string Nationality { get; set; } = string.Empty;
     public DateOnly? BirthDate { get; set; }

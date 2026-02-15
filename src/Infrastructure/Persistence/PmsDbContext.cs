@@ -1,3 +1,4 @@
+// PmsZafiro.Infrastructure/Persistence/PmsDbContext.cs
 using Microsoft.EntityFrameworkCore;
 using PmsZafiro.Domain.Entities;
 
@@ -17,9 +18,11 @@ public class PmsDbContext : DbContext
     public DbSet<Product> Products { get; set; }
     public DbSet<ReservationSegment> ReservationSegments { get; set; }
     public DbSet<ReservationGuest> ReservationGuests { get; set; }
-    
     public DbSet<User> Users { get; set; }
     public DbSet<RoomPriceOverride> RoomPriceOverrides { get; set; }
+    
+    // --- NUEVO DBSET PARA INTEGRACIONES ---
+    public DbSet<ChannelRoomMapping> ChannelRoomMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -27,43 +30,49 @@ public class PmsDbContext : DbContext
 
         // --- CONFIGURACIÓN DE RESERVAS (NUEVA ARQUITECTURA) ---
         
-        // 1. La Reserva ya no tiene RoomId directo. Tiene una colección de segmentos.
         modelBuilder.Entity<Reservation>()
             .HasMany(r => r.Segments)
             .WithOne(s => s.Reservation)
             .HasForeignKey(s => s.ReservationId)
-            .OnDelete(DeleteBehavior.Cascade); // Si borras la reserva, se borran los segmentos
+            .OnDelete(DeleteBehavior.Cascade);
 
-        // 2. Configuración del Segmento (La tabla intermedia que tiene el RoomId)
         modelBuilder.Entity<ReservationSegment>(entity =>
         {
             entity.ToTable("ReservationSegments");
             entity.HasKey(s => s.Id);
-
-            // Relación Segmento -> Habitación
             entity.HasOne(s => s.Room)
-                .WithMany() // Una habitación puede tener muchos segmentos (historial)
+                .WithMany() 
                 .HasForeignKey(s => s.RoomId)
-                .OnDelete(DeleteBehavior.Restrict); // No borrar habitación si tiene historial
+                .OnDelete(DeleteBehavior.Restrict); 
         });
         
         modelBuilder.Entity<ReservationGuest>()
-            .HasKey(rg => new { rg.ReservationId, rg.GuestId }); // Clave compuesta
+            .HasKey(rg => new { rg.ReservationId, rg.GuestId });
 
         modelBuilder.Entity<ReservationGuest>()
             .HasOne(rg => rg.Reservation)
             .WithMany(r => r.ReservationGuests)
             .HasForeignKey(rg => rg.ReservationId)
-            .OnDelete(DeleteBehavior.Cascade); // Si borras la reserva, se borran los acompañantes de la lista
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<ReservationGuest>()
             .HasOne(rg => rg.Guest)
-            .WithMany() // El Guest no necesita tener una lista explícita de reservas donde fue acompañante por ahora
+            .WithMany() 
             .HasForeignKey(rg => rg.GuestId)
-            .OnDelete(DeleteBehavior.Restrict); // No borrar el perfil del huésped si se borra la reserva
+            .OnDelete(DeleteBehavior.Restrict); 
         
         modelBuilder.Entity<GuestFolio>().ToTable("GuestFolios");
         modelBuilder.Entity<ExternalFolio>().ToTable("ExternalFolios");
+
+        // --- CONFIGURACIÓN DE MAPEOS DE CANALES (OTA) ---
+        modelBuilder.Entity<ChannelRoomMapping>(entity =>
+        {
+            entity.ToTable("ChannelRoomMappings");
+            entity.HasKey(e => e.Id);
+            
+            // Índice único para evitar mapeos duplicados y buscar súper rápido cuando entra un Webhook
+            entity.HasIndex(e => new { e.Channel, e.ExternalRoomId, e.ExternalRatePlanId }).IsUnique();
+        });
         
         modelBuilder.Entity<User>().HasData(
             new User 
