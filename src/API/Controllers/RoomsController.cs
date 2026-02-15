@@ -8,6 +8,12 @@ using PmsZafiro.Infrastructure.Persistence;
 
 namespace PmsZafiro.API.Controllers;
 
+// Creamos un pequeño DTO para recibir el status como JSON estándar
+public class UpdateRoomStatusDto 
+{ 
+    public string Status { get; set; } = string.Empty; 
+}
+
 [ApiController]
 [Route("api/[controller]")]
 public class RoomsController : ControllerBase
@@ -36,7 +42,6 @@ public class RoomsController : ControllerBase
             Category = r.Category,
             BasePrice = r.BasePrice,
             Status = r.Status.ToString(),
-            // Convertimos DateOnly a DateTime explícitamente para el DTO
             PriceOverrides = r.PriceOverrides?.Select(po => new RoomPriceOverrideDto 
             {
                 RoomId = po.RoomId,
@@ -81,16 +86,22 @@ public class RoomsController : ControllerBase
         return CreatedAtAction(nameof(GetAll), new { id = room.Id }, room);
     }
     
+    // 👇 CORRECCIÓN AQUÍ: Recibimos un objeto JSON con la propiedad "Status"
     [HttpPatch("{id}/status")]
-    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] RoomStatus newStatus)
+    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateRoomStatusDto dto)
     {
         var room = await _repository.GetByIdAsync(id);
         if (room == null) return NotFound();
         
-        room.Status = newStatus;
-        await _repository.UpdateAsync(room);
+        // Convertimos el texto (ej. "Dirty") al enum de C#
+        if (Enum.TryParse<RoomStatus>(dto.Status, true, out var parsedStatus))
+        {
+            room.Status = parsedStatus;
+            await _repository.UpdateAsync(room);
+            return NoContent();
+        }
         
-        return NoContent();
+        return BadRequest(new { message = "Estado inválido." });
     }
     
     [HttpPut("{id}")]
@@ -129,8 +140,6 @@ public class RoomsController : ControllerBase
             return NotFound(new { message = "No se encontraron habitaciones con los criterios seleccionados." });
 
         var roomIds = roomsAffected.Select(r => r.Id).ToList();
-        
-        // Convertimos los DateTimes del frontend a DateOnly para LINQ
         var startDateOnly = DateOnly.FromDateTime(dto.StartDate);
         var endDateOnly = DateOnly.FromDateTime(dto.EndDate);
         
@@ -149,7 +158,7 @@ public class RoomsController : ControllerBase
                 {
                     Id = Guid.NewGuid(),
                     RoomId = room.Id,
-                    Date = DateOnly.FromDateTime(currentDate), // Convertimos DateTime a DateOnly
+                    Date = DateOnly.FromDateTime(currentDate), 
                     Price = dto.Price
                 });
             }
