@@ -21,51 +21,59 @@ public class SeedController : ControllerBase
     [HttpPost("init")]
     public async Task<IActionResult> Initialize()
     {
-        // 1. Limpieza de Base de Datos
-        // Primero borramos transacciones (Hijos)
-        await _context.FolioTransactions.ExecuteDeleteAsync();
-
-        // FIX: Borrado manual de jerarquía TPT (Hijos primero, luego Padre)
-        await _context.Database.ExecuteSqlRawAsync("DELETE FROM GuestFolios"); 
-        await _context.Database.ExecuteSqlRawAsync("DELETE FROM ExternalFolios");
-        await _context.Database.ExecuteSqlRawAsync("DELETE FROM Folios");
-
-        // El resto de entidades simples
-        await _context.ReservationSegments.ExecuteDeleteAsync();
-        await _context.Reservations.ExecuteDeleteAsync();
-        await _context.Products.ExecuteDeleteAsync();
-        await _context.Rooms.ExecuteDeleteAsync();
-        await _context.Guests.ExecuteDeleteAsync();
-        
-        // Limpieza de caja
-        await _context.CashierShifts.ExecuteDeleteAsync();
-
-        // 2. Crear Datos Maestros
-        
-        // CREAR TURNO SISTEMA (Importante para que las transacciones históricas tengan FK válida)
-        var systemShift = new CashierShift
+        try 
         {
-            Id = Guid.NewGuid(),
-            UserId = "system",
-            OpenedAt = DateTime.UtcNow.AddYears(-1),
-            ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
-            StartingAmount = 0, 
-            Status = CashierShiftStatus.Closed
-        };
-        await _context.CashierShifts.AddAsync(systemShift);
-        await _context.SaveChangesAsync();
+            // 1. Limpieza de Base de Datos
+            // Primero borramos transacciones (Hijos)
+            await _context.FolioTransactions.ExecuteDeleteAsync();
 
-        var rooms = await CreateRooms();
-        var guests = await CreateGuests();
-        var products = await CreateProducts();
+            // FIX: Borrado manual de jerarquía TPT (Hijos primero, luego Padre)
+            // PostgreSQL requiere comillas dobles para respetar las mayúsculas ("GuestFolios")
+            await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"GuestFolios\""); 
+            await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"ExternalFolios\"");
+            await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"Folios\"");
 
-        // 3. Generar Escenarios
-        await CreateHistoricalReservations(rooms, guests, products, systemShift.Id);
-        await CreateActiveReservations(rooms, guests, products, systemShift.Id);
-        await CreateFutureReservations(rooms, guests);
-        await CreateSplitStayReservation(rooms, guests[0]);
+            // El resto de entidades simples
+            await _context.ReservationSegments.ExecuteDeleteAsync();
+            await _context.Reservations.ExecuteDeleteAsync();
+            await _context.Products.ExecuteDeleteAsync();
+            await _context.Rooms.ExecuteDeleteAsync();
+            await _context.Guests.ExecuteDeleteAsync();
+            
+            // Limpieza de caja
+            await _context.CashierShifts.ExecuteDeleteAsync();
 
-        return Ok(new { message = "Base de datos reiniciada y poblada correctamente." });
+            // 2. Crear Datos Maestros
+            
+            // CREAR TURNO SISTEMA (Importante para que las transacciones históricas tengan FK válida)
+            var systemShift = new CashierShift
+            {
+                Id = Guid.NewGuid(),
+                UserId = "system",
+                OpenedAt = DateTime.UtcNow.AddYears(-1),
+                ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
+                StartingAmount = 0, 
+                Status = CashierShiftStatus.Closed
+            };
+            await _context.CashierShifts.AddAsync(systemShift);
+            await _context.SaveChangesAsync();
+
+            var rooms = await CreateRooms();
+            var guests = await CreateGuests();
+            var products = await CreateProducts();
+
+            // 3. Generar Escenarios
+            await CreateHistoricalReservations(rooms, guests, products, systemShift.Id);
+            await CreateActiveReservations(rooms, guests, products, systemShift.Id);
+            await CreateFutureReservations(rooms, guests);
+            await CreateSplitStayReservation(rooms, guests[0]);
+
+            return Ok(new { message = "Base de datos reiniciada y poblada correctamente." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Error poblando base de datos", error = ex.Message, details = ex.InnerException?.Message });
+        }
     }
 
     // --- MÉTODOS DE GENERACIÓN ---
@@ -128,7 +136,7 @@ public class SeedController : ControllerBase
                 Email = $"guest{i}@test.com",
                 Phone = "3001234567",
                 Nationality = "Colombia",
-                CreatedAt = DateTimeOffset.UtcNow.AddMonths(-6)
+                CreatedAt = DateTime.UtcNow.AddMonths(-6) // Corregido a DateTime para consistencia
             });
         }
         await _context.Guests.AddRangeAsync(guests);
@@ -202,7 +210,7 @@ public class SeedController : ControllerBase
                 Adults = _random.Next(1, 3),
                 Children = _random.Next(0, 2),
                 TotalAmount = room.BasePrice * 2,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = DateTime.UtcNow
             };
             
             res.Segments.Add(new ReservationSegment
@@ -241,7 +249,7 @@ public class SeedController : ControllerBase
             Children = 0,
             TotalAmount = (room1.BasePrice * 2) + room2.BasePrice,
             Notes = "Split Stay Demo - Cambio de habitación",
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTime.UtcNow
         };
 
         res.Segments.Add(new ReservationSegment { Id=Guid.NewGuid(), RoomId = room1.Id, CheckIn = checkIn, CheckOut = moveDate });
