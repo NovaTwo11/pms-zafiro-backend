@@ -1,11 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "Em4jc1KPdlc=",
+  "dgSpecHash": "+5IQL+7gcH0=",
   "success": true,
   "projectFilePath": "C:\\Users\\holda\\RiderProjects\\PmsZafiroBackend\\src\\API\\PmsZafiro.API.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\holda\\.nuget\\packages\\azure.core\\1.47.1\\azure.core.1.47.1.nupkg.sha512",
     "C:\\Users\\holda\\.nuget\\packages\\azure.identity\\1.14.2\\azure.identity.1.14.2.nupkg.sha512",
+    "C:\\Users\\holda\\.nuget\\packages\\bcrypt.net-next\\4.0.3\\bcrypt.net-next.4.0.3.nupkg.sha512",
     "C:\\Users\\holda\\.nuget\\packages\\humanizer.core\\2.14.1\\humanizer.core.2.14.1.nupkg.sha512",
     "C:\\Users\\holda\\.nuget\\packages\\microsoft.aspnetcore.authentication.jwtbearer\\10.0.3\\microsoft.aspnetcore.authentication.jwtbearer.10.0.3.nupkg.sha512",
     "C:\\Users\\holda\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.0\\microsoft.aspnetcore.openapi.10.0.0.nupkg.sha512",

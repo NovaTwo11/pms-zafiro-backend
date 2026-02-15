@@ -65,6 +65,10 @@ public class BookingSyncWorker : BackgroundService
                 {
                     await SyncAvailabilityToBookingAsync(evt, context, ct);
                 }
+                else if (evt.EventType == IntegrationEventType.RateUpdate)
+                {
+                    await SyncRateToBookingAsync(evt, context, ct);
+                }
 
                 evt.Status = IntegrationStatus.Processed;
                 evt.ProcessedAt = DateTime.UtcNow;
@@ -156,5 +160,50 @@ public class BookingSyncWorker : BackgroundService
 
             currentDate = currentDate.AddDays(1);
         }
+    }
+    
+    private async Task SyncRateToBookingAsync(IntegrationOutboundEvent evt, PmsDbContext context, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<JsonElement>(evt.Payload);
+        
+        var categoryString = payload.GetProperty("InternalCategory").GetString();
+        var startDate = payload.GetProperty("StartDate").GetDateTime();
+        var endDate = payload.GetProperty("EndDate").GetDateTime();
+        var amount = payload.GetProperty("Amount").GetDecimal();
+
+        // 1. Obtener Mapeo
+        var mapping = await context.Set<ChannelRoomMapping>()
+            .FirstOrDefaultAsync(m => m.RoomCategory == categoryString && m.Channel == BookingChannel.BookingCom, ct);
+
+        if (mapping == null)
+        {
+            _logger.LogWarning($"[Rate Sync] No existe mapeo para la categoría '{categoryString}'. Omitiendo.");
+            return; 
+        }
+
+        // 2. Construir Payload para Booking (ARI - Rate Amount)
+        // Nota: Booking requiere un RatePlanId. 
+        // Si tu tabla de mapeo tiene 'ExternalRatePlanId', úsalo. Si no, usa uno por defecto o configura.
+        // Asumiremos que el mapeo tiene el ID del plan de tarifas estándar de Booking.
+        
+        string ratePlanId = !string.IsNullOrEmpty(mapping.ExternalRatePlanId) ? mapping.ExternalRatePlanId : "STANDARD_RATE_ID"; // Reemplazar con ID real o lógica
+
+        // Booking permite actualizar rangos de fechas en una sola llamada
+        var bookingRatePayload = new
+        {
+            id = mapping.ExternalRoomId,
+            rate_plan_id = ratePlanId,
+            date_from = startDate.ToString("yyyy-MM-dd"),
+            date_to = endDate.ToString("yyyy-MM-dd"),
+            amount = amount,
+            currency = "COP" // O leer del payload
+        };
+
+        // 3. Enviar a Booking API (Simulación)
+        // var client = _httpClientFactory.CreateClient("BookingClient");
+        // var response = await client.PostAsJsonAsync("/rates", bookingRatePayload, ct);
+        // response.EnsureSuccessStatusCode();
+
+        _logger.LogInformation($"[Booking Sync RATE] Fechas: {startDate:yyyy-MM-dd} al {endDate:yyyy-MM-dd} | Cat: {categoryString} | Precio: {amount:C}");
     }
 }

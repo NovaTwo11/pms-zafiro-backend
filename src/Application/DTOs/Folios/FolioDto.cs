@@ -1,7 +1,7 @@
-using System;
-using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace PmsZafiro.Application.DTOs.Folios;
+    
 
 public class FolioDto
 {
@@ -12,7 +12,7 @@ public class FolioDto
     
     public string Status { get; set; } = string.Empty;
     
-    // "guest" o "external" (necesario para la lógica del frontend)
+    [JsonPropertyName("type")]
     public string FolioType { get; set; } = string.Empty; 
     
     public decimal Balance { get; set; }
