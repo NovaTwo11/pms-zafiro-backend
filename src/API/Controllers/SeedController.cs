@@ -24,32 +24,45 @@ public class SeedController : ControllerBase
         try 
         {
             // 1. Limpieza de Base de Datos
-            // Primero borramos transacciones (Hijos)
             await _context.FolioTransactions.ExecuteDeleteAsync();
 
-            // FIX: Borrado manual de jerarquía TPT (Hijos primero, luego Padre)
-            // PostgreSQL requiere comillas dobles para respetar las mayúsculas ("GuestFolios")
+            // FIX POSTGRES: Comillas dobles para tablas con mayúsculas
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"GuestFolios\""); 
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"ExternalFolios\"");
             await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"Folios\"");
 
-            // El resto de entidades simples
             await _context.ReservationSegments.ExecuteDeleteAsync();
+            await _context.ReservationGuests.ExecuteDeleteAsync(); // <-- Agregué esta por seguridad si la tienes
             await _context.Reservations.ExecuteDeleteAsync();
             await _context.Products.ExecuteDeleteAsync();
             await _context.Rooms.ExecuteDeleteAsync();
             await _context.Guests.ExecuteDeleteAsync();
-            
-            // Limpieza de caja
             await _context.CashierShifts.ExecuteDeleteAsync();
+            
+            // --- NUEVO: Limpiar y crear Usuario Admin ---
+            // Borramos usuarios existentes para evitar duplicados
+            await _context.Database.ExecuteSqlRawAsync("DELETE FROM \"Users\""); 
+            
+            // Creamos el Admin manualmente
+            var adminUser = new User
+            {
+                // No asignamos ID si es autoincremental, o asignamos uno fijo si prefieres
+                Username = "admin",
+                PasswordHash = "admin123", // Coincide con tu AuthController
+                Role = "Admin",
+                CreatedAt = DateTime.UtcNow
+            };
+            await _context.Users.AddAsync(adminUser);
+            // ---------------------------------------------
+
+            await _context.SaveChangesAsync(); // Guardamos el usuario antes de seguir
 
             // 2. Crear Datos Maestros
-            
-            // CREAR TURNO SISTEMA (Importante para que las transacciones históricas tengan FK válida)
+            // CREAR TURNO SISTEMA
             var systemShift = new CashierShift
             {
                 Id = Guid.NewGuid(),
-                UserId = "system",
+                UserId = "system", // Ojo: Asegúrate que esto no rompa FKs si UserId es relación a User
                 OpenedAt = DateTime.UtcNow.AddYears(-1),
                 ClosedAt = DateTime.UtcNow.AddYears(-1).AddHours(8),
                 StartingAmount = 0, 
@@ -68,7 +81,7 @@ public class SeedController : ControllerBase
             await CreateFutureReservations(rooms, guests);
             await CreateSplitStayReservation(rooms, guests[0]);
 
-            return Ok(new { message = "Base de datos reiniciada y poblada correctamente." });
+            return Ok(new { message = "Base de datos reiniciada, poblada y ADMIN creado." });
         }
         catch (Exception ex)
         {
