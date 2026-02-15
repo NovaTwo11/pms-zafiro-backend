@@ -26,9 +26,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy("ProductionCorsPolicy", policy =>
     {
         policy.WithOrigins(
-                "http://localhost:3000",                  // Pruebas locales
-                "https://pms-zafiro-frontend.vercel.app", // Tu Frontend en Vercel (ajusta si cambia)
-                "https://tu-dominio-comprado.com"         // Tu dominio propio (por si el front también lo usa)
+                "http://localhost:3000",                  
+                "https://pms-zafiro.vercel.app.app",
+                "https://hotelzafiro.online"    ,  
+                "https://www.hotelzafiro.online"
             )
             .AllowAnyHeader()
             .AllowAnyMethod()

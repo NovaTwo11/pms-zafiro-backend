@@ -1,20 +1,5 @@
 ﻿services:
-  # Servicio de Base de Datos
-  pms-db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: pms_zafiro_db
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=${DB_PASSWORD} # Variable de entorno
-    ports:
-      - "1433:1433" # Solo ábrelo si necesitas conectarte desde tu PC local (SSMS)
-    volumes:
-      - mssql_data:/var/opt/mssql # Persistencia de datos
-    networks:
-      - pms-network
-    restart: always
-
-  # Servicio de API (.NET)
+  # 1. Tu API (.NET)
   pms-api:
     build:
       context: .
@@ -22,18 +7,33 @@
     container_name: pms_zafiro_api
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      # Cadena de conexión apuntando al nombre del servicio 'pms-db'
-      - ConnectionStrings__DefaultConnection=Server=pms-db;Database=PmsZafiroDb;User Id=sa;Password=${DB_PASSWORD};TrustServerCertificate=True;
+      # Conexión interna directa a la base de datos (nombre del servicio 'pms-db')
+      - ConnectionStrings__DefaultConnection=Host=pms-db;Port=5432;Database=zafiro_db;Username=postgres;Password=${DB_PASSWORD}
+      - JwtSettings__Key=${JWT_KEY}
     ports:
-      - "8080:8080" # Puerto interno del contenedor expuesto al VPS
+      - "8080:8080"
     depends_on:
       - pms-db
     networks:
       - pms-network
     restart: always
 
+  # 2. Tu Base de Datos (PostgreSQL Local)
+  pms-db:
+    image: postgres:15-alpine
+    container_name: pms_zafiro_db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=zafiro_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Esto guarda los datos aunque reinicies
+    networks:
+      - pms-network
+    restart: always
+
 volumes:
-  mssql_data:
+  postgres_data:
 
 networks:
   pms-network:
